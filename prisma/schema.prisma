@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum LeadSource {
+  WEBSITE
+  INSTAGRAM
+}
+
+enum LeadStage {
+  NEW
+  CONTACTED
+  FOLLOW_UP
+  INTERESTED
+  NOT_INTERESTED
+  NO_RESPONSE
+  CONVERTED
+  CLOSED
+}
+
+enum LeadActivityType {
+  ASSIGNMENT_CHANGE
+  STAGE_CHANGE
+  NOTE_ADDED
+  FOLLOW_UP_UPDATE
+  SYSTEM_SYNC
+  CREATION
+}
+
+enum SheetConnectionStatus {
+  NOT_CONNECTED
+  CONNECTED
+  ERROR
+}
+
+model User {
+  id           String @id @default(cuid())
+  username     String @map("name")
+  email        String @unique
+  passwordHash String @map("password")
+  role         Role   @default(USER)
+  department   String @default("Other")
+
+  assignedTasks Task[]        @relation("AssignedTasks")
+  createdTasks  Task[]        @relation("CreatedTasks")
+  taskComments  TaskComment[]
+
+  websiteLeads   WebsiteLead[]   @relation("WebsiteLeads")
+  instagramLeads InstagramLead[] @relation("InstagramLeads")
+  leadActivities LeadActivity[]  @relation("UserActivities")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Task {
+  id           String       @id @default(cuid())
+  title        String
+  description  String?
+  status       TaskStatus   @default(PENDING)
+  priority     TaskPriority @default(MEDIUM)
+  dueDate      DateTime?
+  assignedToId String
+  assignedById String
+
+  assignedTo User          @relation("AssignedTasks", fields: [assignedToId], references: [id], onDelete: Cascade)
+  assignedBy User          @relation("CreatedTasks", fields: [assignedById], references: [id], onDelete: Cascade)
+  comments   TaskComment[]
+
+  websiteLeadId String?      @map("website_lead_id")
+  websiteLead   WebsiteLead? @relation("WebsiteLeadTasks", fields: [websiteLeadId], references: [id], onDelete: SetNull)
+
+  instagramLeadId String?        @map("instagram_lead_id")
+  instagramLead   InstagramLead? @relation("InstagramLeadTasks", fields: [instagramLeadId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assignedToId])
+  @@index([assignedToId, status])
+  @@index([assignedToId, dueDate])
+  @@index([assignedById])
+  @@index([status])
+  @@index([dueDate])
+  @@index([websiteLeadId])
+  @@index([instagramLeadId])
+}
+
+model TaskComment {
+  id       String @id @default(cuid())
+  body     String
+  taskId   String
+  authorId String
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([authorId])
+}
+
+model LeadIntegration {
+  id            String                @id @default(cuid())
+  source        LeadSource            @unique
+  appScriptUrl  String?
+  spreadsheetId String?
+  sheetName     String
+  secretToken   String?
+  status        SheetConnectionStatus @default(NOT_CONNECTED)
+  lastTestedAt  DateTime?
+  lastSyncedAt  DateTime?
+  importedCount Int                   @default(0)
+  failedCount   Int                   @default(0)
+  lastError     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WebsiteLead {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  atmId     String?  @unique @map("atm_id")
+
+  name          String
+  email         String?
+  phone         String?
+  city          String?
+  address       String? @db.Text
+  ownershipType String? @map("ownership_type")
+  provider      String?
+  language      String?
+  message       String? @db.Text
+  sheetSource   String? @map("sheet_source")
+
+  stage        LeadStage @default(NEW)
+  assignedToId String?   @map("assigned_to_id")
+  assignedTo   User?     @relation("WebsiteLeads", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  activities LeadActivity[] @relation("WebsiteLeadActivities")
+  tasks      Task[]         @relation("WebsiteLeadTasks")
+
+  lastContactedAt DateTime? @map("last_contacted_at")
+  nextFollowUpAt  DateTime? @map("next_follow_up_at")
+  notes           String?   @db.Text
+  readAt          DateTime? @map("read_at")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stage])
+  @@index([assignedToId])
+  @@index([assignedToId, stage])
+  @@index([atmId])
+  @@index([readAt])
+}
+
+model InstagramLead {
+  id        String   @id @default(cuid())
+  timestamp DateTime @default(now())
+  atmId     String?  @unique @map("atm_id")
+
+  name          String
+  email         String?
+  phone         String?
+  city          String?
+  address       String? @db.Text
+  ownershipType String? @map("ownership_type")
+  provider      String?
+  language      String?
+  message       String? @db.Text
+  sheetSource   String? @map("sheet_source")
+
+  stage        LeadStage @default(NEW)
+  assignedToId String?   @map("assigned_to_id")
+  assignedTo   User?     @relation("InstagramLeads", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  activities LeadActivity[] @relation("InstagramLeadActivities")
+  tasks      Task[]         @relation("InstagramLeadTasks")
+
+  lastContactedAt DateTime? @map("last_contacted_at")
+  nextFollowUpAt  DateTime? @map("next_follow_up_at")
+  notes           String?   @db.Text
+  readAt          DateTime? @map("read_at")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stage])
+  @@index([assignedToId])
+  @@index([assignedToId, stage])
+  @@index([atmId])
+  @@index([readAt])
+}
+
+model LeadActivity {
+  id          String           @id @default(cuid())
+  actionType  LeadActivityType @map("action_type")
+  description String
+
+  userId String? @map("user_id")
+  user   User?   @relation("UserActivities", fields: [userId], references: [id], onDelete: SetNull)
+
+  websiteLeadId String?      @map("website_lead_id")
+  websiteLead   WebsiteLead? @relation("WebsiteLeadActivities", fields: [websiteLeadId], references: [id], onDelete: Cascade)
+
+  instagramLeadId String?        @map("instagram_lead_id")
+  instagramLead   InstagramLead? @relation("InstagramLeadActivities", fields: [instagramLeadId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([websiteLeadId])
+  @@index([instagramLeadId])
+  @@index([userId])
+}

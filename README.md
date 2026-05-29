@@ -1,36 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Automation CRM
 
-## Getting Started
+Next.js CRM for admin/user task management, lead assignment, lead follow-up, and Google Sheets lead synchronization.
 
-First, run the development server:
+## Requirements
+
+- Node.js 20+
+- PostgreSQL database
+- Google Apps Script deployment for sheet sync
+
+## Environment
+
+Copy `.env.example` to `.env` and set real values.
+
+Required variables:
+
+- `DATABASE_URL`: PostgreSQL connection string.
+- `AUTH_SECRET`: random session signing secret, at least 32 characters.
+- `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`: used by `npm run seed:admin`.
+
+## Local Setup
 
 ```bash
+npm install
+npm run prisma:generate
+npm run prisma:validate
+npm run prisma:migrate
+npm run seed:admin
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Production Checks
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run these before deployment:
 
-## Learn More
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+For production databases, apply migrations with:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run prisma:deploy
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Lead Sync
 
-## Deploy on Vercel
+Configure Website and Instagram lead integrations from Admin Settings. Each source needs:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Apps Script Web App URL ending in `/exec`
+- Google Spreadsheet ID
+- Sheet tab name
+- Shared secret token matching Apps Script `API_KEY`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Public registration is disabled. Admins create users from the Admin Users screen.
