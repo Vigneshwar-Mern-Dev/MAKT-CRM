@@ -71,6 +71,10 @@ type LeadPageProps = {
   actionPath?: string;
 };
 
+const DEFAULT_CRM_URL = "https://makt-crm.vercel.app";
+const CRM_ORIGIN = (process.env.NEXT_PUBLIC_CRM_URL || DEFAULT_CRM_URL).replace(/\/+$/, "");
+const SYNC_LEAD_WEBHOOK_URL = `${CRM_ORIGIN}/api/sync-lead`;
+
 function formatLeadDate(
   lead: Pick<LeadRow, "createdAt" | "timestamp">,
   source: LeadSource,
@@ -210,7 +214,7 @@ export function LeadPage({
  */
 
 const API_KEY = PropertiesService.getScriptProperties().getProperty("API_KEY") || "${displaySecretToken}";
-const CRM_URL = PropertiesService.getScriptProperties().getProperty("CRM_URL") || "${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}";
+const CRM_URL = stripTrailingSlashes(PropertiesService.getScriptProperties().getProperty("CRM_URL") || "${CRM_ORIGIN}");
 
 const SHEET_SOURCE_MAP = {
   "${websiteSheetName}": "WEBSITE",
@@ -219,6 +223,14 @@ const SHEET_SOURCE_MAP = {
 
 function json(data) {
   return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function stripTrailingSlashes(value) {
+  let text = String(value || "");
+  while (text.length > 1 && text.slice(-1) === "/") {
+    text = text.slice(0, -1);
+  }
+  return text;
 }
 
 function doGet() {
@@ -472,6 +484,7 @@ function syncSingleRow(sheet, rowNumber, source) {
     lead.syncedAt = new Date().toISOString();
     const webhookUrl = CRM_URL + "/api/sync-lead";
     const payload = {
+      source: source,
       secretToken: API_KEY,
       lead: lead
     };
@@ -1694,7 +1707,7 @@ function testSync() {
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Webhook URL</span>
                         <button
-                          onClick={() => copyToClipboard((typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000') + "/api/sync-lead", setCopiedWebhook)}
+                          onClick={() => copyToClipboard(SYNC_LEAD_WEBHOOK_URL, setCopiedWebhook)}
                           className="text-slate-400 hover:text-cyan-300 transition cursor-pointer flex items-center gap-1 text-[10px]"
                         >
                           {copiedWebhook ? (
@@ -1705,7 +1718,7 @@ function testSync() {
                         </button>
                       </div>
                       <p className="font-mono text-[11px] text-slate-300 truncate">
-                        {(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000') + "/api/sync-lead"}
+                        {SYNC_LEAD_WEBHOOK_URL}
                       </p>
                     </div>
 
@@ -1869,11 +1882,11 @@ function testSync() {
                     <div className="flex-1 min-w-0">
                       <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Webhook Endpoint (Real-time Push)</p>
                       <p className="font-mono text-[11px] text-cyan-300 truncate mt-0.5">
-                        {(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000') + "/api/sync-lead"}
+                        {SYNC_LEAD_WEBHOOK_URL}
                       </p>
                     </div>
                     <button
-                      onClick={() => copyToClipboard((typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000') + "/api/sync-lead", setCopiedWebhook)}
+                      onClick={() => copyToClipboard(SYNC_LEAD_WEBHOOK_URL, setCopiedWebhook)}
                       className="shrink-0 rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2.5 py-1.5 text-[10px] font-bold text-cyan-300 hover:bg-cyan-500/10 transition cursor-pointer"
                     >
                       {copiedWebhook ? "Copied" : "Copy"}

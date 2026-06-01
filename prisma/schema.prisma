@@ -57,6 +57,42 @@ enum SheetConnectionStatus {
   ERROR
 }
 
+enum CallEventType {
+  RINGING
+  ANSWERED
+  ENDED
+  MISSED
+}
+
+enum CallSessionStatus {
+  RINGING
+  ANSWERED
+  MISSED
+  COMPLETED
+}
+
+enum CallLeadStatus {
+  NEW
+  CONTACTED
+  FOLLOW_UP
+  INTERESTED
+  NOT_INTERESTED
+  NO_RESPONSE
+  CONVERTED
+  CLOSED
+}
+
+enum CallActivityType {
+  CALL_CREATED
+  CALL_RINGING
+  CALL_ANSWERED
+  CALL_MISSED
+  CALL_COMPLETED
+  ASSIGNMENT_CHANGE
+  NOTE_ADDED
+  FOLLOW_UP_UPDATE
+}
+
 model User {
   id           String @id @default(cuid())
   username     String @map("name")
@@ -72,6 +108,10 @@ model User {
   websiteLeads   WebsiteLead[]   @relation("WebsiteLeads")
   instagramLeads InstagramLead[] @relation("InstagramLeads")
   leadActivities LeadActivity[]  @relation("UserActivities")
+  callLeads      CallLead[]      @relation("CallLeads")
+  callSessions   CallSession[]   @relation("CallSessions")
+  callActivities CallActivity[]  @relation("CallActivities")
+  callFollowUps  CallFollowUp[]  @relation("CallFollowUps")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -237,4 +277,136 @@ model LeadActivity {
   @@index([websiteLeadId])
   @@index([instagramLeadId])
   @@index([userId])
+}
+
+model CompanyPhone {
+  id            String    @id @default(cuid())
+  phoneNumber   String    @unique @map("phone_number")
+  label         String
+  deviceId      String    @unique @map("device_id")
+  authTokenHash String    @map("auth_token_hash")
+  lastSeenAt    DateTime? @map("last_seen_at")
+  isActive      Boolean   @default(true) @map("is_active")
+
+  events   CallEvent[]
+  sessions CallSession[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([deviceId])
+  @@index([phoneNumber])
+}
+
+model CallLead {
+  id              String         @id @default(cuid())
+  phone           String         @unique
+  displayName     String         @map("display_name")
+  status          CallLeadStatus @default(NEW)
+  assignedToId    String?        @map("assigned_to_id")
+  assignedTo      User?          @relation("CallLeads", fields: [assignedToId], references: [id], onDelete: SetNull)
+  firstCompanyPhone String?      @map("first_company_phone")
+  lastCompanyPhone  String?      @map("last_company_phone")
+  lastContactedAt DateTime?      @map("last_contacted_at")
+  nextFollowUpAt  DateTime?      @map("next_follow_up_at")
+  notes           String?        @db.Text
+
+  sessions   CallSession[]
+  activities CallActivity[]
+  followUps  CallFollowUp[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([nextFollowUpAt])
+}
+
+model CallEvent {
+  id             String        @id @default(cuid())
+  eventId        String        @unique @map("event_id")
+  companyPhoneId String        @map("company_phone_id")
+  companyPhone   CompanyPhone  @relation(fields: [companyPhoneId], references: [id], onDelete: Cascade)
+  sessionId      String?       @map("session_id")
+  session        CallSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  callerNumber   String        @map("caller_number")
+  eventType      CallEventType @map("event_type")
+  occurredAt     DateTime      @map("occurred_at")
+  receivedAt     DateTime      @default(now()) @map("received_at")
+  rawPayload     Json          @map("raw_payload")
+
+  @@index([companyPhoneId])
+  @@index([sessionId])
+  @@index([callerNumber])
+  @@index([eventType])
+  @@index([occurredAt])
+}
+
+model CallSession {
+  id             String            @id @default(cuid())
+  companyPhoneId String            @map("company_phone_id")
+  companyPhone   CompanyPhone      @relation(fields: [companyPhoneId], references: [id], onDelete: Cascade)
+  callerNumber   String            @map("caller_number")
+  leadId         String            @map("lead_id")
+  lead           CallLead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  status         CallSessionStatus @default(RINGING)
+  firstRingAt    DateTime          @map("first_ring_at")
+  answeredAt     DateTime?         @map("answered_at")
+  endedAt        DateTime?         @map("ended_at")
+  durationSeconds Int?             @map("duration_seconds")
+  assignedToId   String?           @map("assigned_to_id")
+  assignedTo     User?             @relation("CallSessions", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  events     CallEvent[]
+  activities CallActivity[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyPhoneId])
+  @@index([callerNumber])
+  @@index([leadId])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([firstRingAt])
+}
+
+model CallActivity {
+  id          String           @id @default(cuid())
+  leadId      String           @map("lead_id")
+  lead        CallLead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  sessionId   String?          @map("session_id")
+  session     CallSession?     @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  actionType  CallActivityType @map("action_type")
+  description String
+  userId      String?          @map("user_id")
+  user        User?            @relation("CallActivities", fields: [userId], references: [id], onDelete: SetNull)
+  metadata    Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([leadId])
+  @@index([sessionId])
+  @@index([userId])
+  @@index([actionType])
+}
+
+model CallFollowUp {
+  id           String   @id @default(cuid())
+  leadId       String   @map("lead_id")
+  lead         CallLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  assignedToId String?  @map("assigned_to_id")
+  assignedTo   User?    @relation("CallFollowUps", fields: [assignedToId], references: [id], onDelete: SetNull)
+  dueAt        DateTime @map("due_at")
+  completedAt  DateTime? @map("completed_at")
+  note         String?  @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([leadId])
+  @@index([assignedToId])
+  @@index([dueAt])
+  @@index([completedAt])
 }

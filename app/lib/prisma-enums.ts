@@ -4,6 +4,10 @@ import type {
   LeadStage as PrismaLeadStage,
   Role as PrismaRole,
   SheetConnectionStatus as PrismaSheetConnectionStatus,
+  CallActivityType as PrismaCallActivityType,
+  CallEventType as PrismaCallEventType,
+  CallLeadStatus as PrismaCallLeadStatus,
+  CallSessionStatus as PrismaCallSessionStatus,
   TaskPriority as PrismaTaskPriority,
   TaskStatus as PrismaTaskStatus,
 } from "@prisma/client";
@@ -15,6 +19,10 @@ export type LeadSource = PrismaLeadSource;
 export type LeadStage = PrismaLeadStage;
 export type LeadActivityType = PrismaLeadActivityType;
 export type SheetConnectionStatus = PrismaSheetConnectionStatus;
+export type CallEventType = PrismaCallEventType;
+export type CallSessionStatus = PrismaCallSessionStatus;
+export type CallLeadStatus = PrismaCallLeadStatus;
+export type CallActivityType = PrismaCallActivityType;
 
 export const Role = {
   ADMIN: "ADMIN",
@@ -68,3 +76,39 @@ export const SheetConnectionStatus = {
   PrismaSheetConnectionStatus,
   PrismaSheetConnectionStatus
 >;
+
+export const CallEventType = {
+  RINGING: "RINGING",
+  ANSWERED: "ANSWERED",
+  ENDED: "ENDED",
+  MISSED: "MISSED",
+} as const satisfies Record<PrismaCallEventType, PrismaCallEventType>;
+
+export const CallSessionStatus = {
+  RINGING: "RINGING",
+  ANSWERED: "ANSWERED",
+  MISSED: "MISSED",
+  COMPLETED: "COMPLETED",
+} as const satisfies Record<PrismaCallSessionStatus, PrismaCallSessionStatus>;
+
+export const CallLeadStatus = {
+  NEW: "NEW",
+  CONTACTED: "CONTACTED",
+  FOLLOW_UP: "FOLLOW_UP",
+  INTERESTED: "INTERESTED",
+  NOT_INTERESTED: "NOT_INTERESTED",
+  NO_RESPONSE: "NO_RESPONSE",
+  CONVERTED: "CONVERTED",
+  CLOSED: "CLOSED",
+} as const satisfies Record<PrismaCallLeadStatus, PrismaCallLeadStatus>;
+
+export const CallActivityType = {
+  CALL_CREATED: "CALL_CREATED",
+  CALL_RINGING: "CALL_RINGING",
+  CALL_ANSWERED: "CALL_ANSWERED",
+  CALL_MISSED: "CALL_MISSED",
+  CALL_COMPLETED: "CALL_COMPLETED",
+  ASSIGNMENT_CHANGE: "ASSIGNMENT_CHANGE",
+  NOTE_ADDED: "NOTE_ADDED",
+  FOLLOW_UP_UPDATE: "FOLLOW_UP_UPDATE",
+} as const satisfies Record<PrismaCallActivityType, PrismaCallActivityType>;
