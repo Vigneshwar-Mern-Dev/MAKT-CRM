@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "@/app/lib/auth-actions";
+import { IncomingCallPopup } from "./incoming-call-popup";
 
 type AdminShellProps = {
   children: ReactNode;
@@ -299,6 +300,7 @@ export function AdminShell({ children, user }: AdminShellProps) {
           <div className="flex-1 overflow-y-auto px-5 py-6 md:px-8 md:py-8">{children}</div>
         </div>
       </div>
+      <IncomingCallPopup />
     </main>
   );
 }
