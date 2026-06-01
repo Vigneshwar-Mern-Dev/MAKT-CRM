@@ -33,6 +33,32 @@ export default async function AdminCallLeadsPage() {
       orderBy: { username: "asc" },
     }),
   ]);
+  const rows: CallLeadRow[] = leads.map((lead) => ({
+    id: lead.id,
+    phone: lead.phone,
+    displayName: lead.displayName,
+    email: lead.email,
+    city: lead.city,
+    address: lead.address,
+    ownershipType: lead.ownershipType,
+    provider: lead.provider,
+    language: lead.language,
+    message: lead.message,
+    status: lead.status,
+    assignedToId: lead.assignedToId,
+    lastCompanyPhone: lead.lastCompanyPhone,
+    lastContactedAt: lead.lastContactedAt,
+    nextFollowUpAt: lead.nextFollowUpAt,
+    notes: lead.notes,
+    instagramLeadId: lead.instagramLeadId,
+    sheetSyncedAt: lead.sheetSyncedAt,
+    sheetSyncWarning: lead.sheetSyncWarning,
+    updatedAt: lead.updatedAt,
+    assignedTo: lead.assignedTo,
+    sessions: lead.sessions,
+    activities: lead.activities,
+    _count: lead._count,
+  }));
 
-  return <CallLeadsPage agents={agents} leads={leads as CallLeadRow[]} />;
+  return <CallLeadsPage agents={agents} leads={rows} />;
 }

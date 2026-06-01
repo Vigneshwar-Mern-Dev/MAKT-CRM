@@ -68,6 +68,12 @@ export function EmptyState({ children }: { children: ReactNode }) {
 }
 
 export function CallStatusBadge({ status }: { status: string }) {
+  const labelMap: Record<string, string> = {
+    RINGING: "Ringing",
+    ANSWERED: "On Call",
+    COMPLETED: "Call Ended",
+    MISSED: "Missed",
+  };
   const tone =
     status === "MISSED"
       ? "border-rose-300/20 bg-rose-300/10 text-rose-100"
@@ -77,7 +83,7 @@ export function CallStatusBadge({ status }: { status: string }) {
 
   return (
     <span className={`inline-flex h-7 items-center rounded border px-2 text-xs font-bold ${tone}`}>
-      {status.replace("_", " ")}
+      {labelMap[status] || status.replace("_", " ")}
     </span>
   );
 }
