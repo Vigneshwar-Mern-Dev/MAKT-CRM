@@ -88,23 +88,46 @@ export async function registerCompanyPhone(input: RegisterCompanyPhoneInput) {
   const authTokenHash = hashDeviceToken(deviceToken);
   const label = input.label?.trim() || phoneNumber;
 
-  const companyPhone = await db.companyPhone.upsert({
-    where: { deviceId },
-    update: {
-      phoneNumber,
-      label,
-      authTokenHash,
-      isActive: true,
-      lastSeenAt: new Date(),
-    },
-    create: {
-      phoneNumber,
-      label,
-      deviceId,
-      authTokenHash,
-      isActive: true,
-      lastSeenAt: new Date(),
-    },
+  const companyPhone = await db.$transaction(async (tx) => {
+    const existingPhones = await tx.companyPhone.findMany({
+      where: {
+        OR: [{ deviceId }, { phoneNumber }],
+      },
+    });
+    const uniqueMatches = new Map(existingPhones.map((phone) => [phone.id, phone]));
+
+    if (uniqueMatches.size > 1) {
+      throw new Error(
+        "This phone number and device ID are already linked to different company phones.",
+      );
+    }
+
+    const existingPhone = existingPhones[0];
+
+    if (existingPhone) {
+      return tx.companyPhone.update({
+        where: { id: existingPhone.id },
+        data: {
+          phoneNumber,
+          label,
+          deviceId,
+          authTokenHash,
+          isActive: true,
+          lastSeenAt: new Date(),
+        },
+      });
+    }
+
+    return tx.companyPhone.create({
+      data: {
+        phoneNumber,
+        label,
+        deviceId,
+        authTokenHash,
+        isActive: true,
+        lastSeenAt: new Date(),
+      },
+    });
   });
 
   return {
