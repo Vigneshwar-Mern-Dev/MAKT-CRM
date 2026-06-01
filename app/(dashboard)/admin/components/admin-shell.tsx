@@ -81,6 +81,23 @@ const navItems: NavItem[] = [
     ],
   },
   {
+    href: "/admin/calls",
+    label: "Call Center",
+    icon: (
+      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+        <path d="M7.5 5.5 9.8 8c.5.5.5 1.3 0 1.8l-1 1c1.1 2.2 2.9 4 5.1 5.1l1-1c.5-.5 1.3-.5 1.8 0l2.4 2.3c.6.6.6 1.5.1 2.1-.9 1-2.2 1.5-3.5 1.2C9.8 19.3 4.7 14.2 3.5 8.3 3.2 7 3.7 5.7 4.7 4.8c.6-.5 1.5-.5 2.1.1l.7.6Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M14 5h6M17 2v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    ),
+    children: [
+      { href: "/admin/calls", label: "Overview" },
+      { href: "/admin/calls/live", label: "Live Calls" },
+      { href: "/admin/calls/missed", label: "Missed Calls" },
+      { href: "/admin/calls/leads", label: "Call Leads" },
+      { href: "/admin/calls/phones", label: "Company Phones" },
+    ],
+  },
+  {
     href: "/admin/settings",
     label: "Settings",
     icon: (
@@ -96,6 +113,7 @@ export function AdminShell({ children, user }: AdminShellProps) {
   const pathname = usePathname();
   const initials = user.username.slice(0, 2).toUpperCase() || "AD";
   const leadCenter = navItems.find((item) => item.href === "/admin/leads");
+  const callCenter = navItems.find((item) => item.href === "/admin/calls");
 
   return (
     <main className="h-screen overflow-hidden bg-[#07090d] text-white">
@@ -242,6 +260,25 @@ export function AdminShell({ children, user }: AdminShellProps) {
             {pathname.startsWith("/admin/leads") ? (
               <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">
                 {leadCenter?.children?.map((child) => (
+                    <Link
+                      className={[
+                        "h-9 shrink-0 rounded-lg px-3 text-sm font-medium leading-9",
+                        pathname === child.href
+                          ? "bg-white/10 text-white"
+                          : "border border-white/10 text-slate-400",
+                      ].join(" ")}
+                      href={child.href}
+                      key={child.href}
+                    >
+                      {child.label}
+                    </Link>
+                  ))}
+              </nav>
+            ) : null}
+
+            {pathname.startsWith("/admin/calls") ? (
+              <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">
+                {callCenter?.children?.map((child) => (
                     <Link
                       className={[
                         "h-9 shrink-0 rounded-lg px-3 text-sm font-medium leading-9",

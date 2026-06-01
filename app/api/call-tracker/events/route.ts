@@ -51,14 +51,13 @@ export async function POST(request: NextRequest) {
       !eventId ||
       !deviceId ||
       !companyPhone ||
-      !caller ||
       !callEventTypes.has(eventType) ||
       !occurredAt
     ) {
       return NextResponse.json(
         {
           error:
-            "eventId, deviceId, companyPhone, caller, eventType, and valid occurredAt are required.",
+            "eventId, deviceId, companyPhone, eventType, and valid occurredAt are required.",
         },
         { status: 400 },
       );
@@ -74,7 +73,7 @@ export async function POST(request: NextRequest) {
       eventId,
       deviceId,
       companyPhone,
-      caller,
+      caller: caller || undefined,
       eventType: eventType as CallEventType,
       occurredAt,
       rawPayload: body as Prisma.InputJsonValue,

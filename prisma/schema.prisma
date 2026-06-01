@@ -302,6 +302,13 @@ model CallLead {
   id              String         @id @default(cuid())
   phone           String         @unique
   displayName     String         @map("display_name")
+  email           String?
+  city            String?
+  address         String?        @db.Text
+  ownershipType   String?        @map("ownership_type")
+  provider        String?
+  language        String?
+  message         String?        @db.Text
   status          CallLeadStatus @default(NEW)
   assignedToId    String?        @map("assigned_to_id")
   assignedTo      User?          @relation("CallLeads", fields: [assignedToId], references: [id], onDelete: SetNull)
@@ -309,6 +316,9 @@ model CallLead {
   lastCompanyPhone  String?      @map("last_company_phone")
   lastContactedAt DateTime?      @map("last_contacted_at")
   nextFollowUpAt  DateTime?      @map("next_follow_up_at")
+  instagramLeadId String?        @map("instagram_lead_id")
+  sheetSyncedAt   DateTime?      @map("sheet_synced_at")
+  sheetSyncWarning String?       @map("sheet_sync_warning") @db.Text
   notes           String?        @db.Text
 
   sessions   CallSession[]
@@ -321,6 +331,7 @@ model CallLead {
   @@index([status])
   @@index([assignedToId])
   @@index([nextFollowUpAt])
+  @@index([instagramLeadId])
 }
 
 model CallEvent {

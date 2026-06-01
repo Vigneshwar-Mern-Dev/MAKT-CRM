@@ -9,11 +9,6 @@ const sourceMeta = [
     title: "Website Leads",
     tone: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
   },
-  {
-    source: LeadSource.INSTAGRAM,
-    title: "Instagram Leads",
-    tone: "border-fuchsia-300/20 bg-fuchsia-300/10 text-fuchsia-100",
-  },
 ];
 
 function statusLabel(status: SheetConnectionStatus) {
@@ -74,27 +69,15 @@ async function getSourceStatuses() {
   }
 }
 
-type AdminLeadsPageProps = {
-  searchParams: Promise<{
-    source?: string;
-  }>;
-};
-
-function parseLeadSource(value: string | undefined) {
-  return value === LeadSource.INSTAGRAM
-    ? LeadSource.INSTAGRAM
-    : LeadSource.WEBSITE;
+function parseLeadSource() {
+  return LeadSource.WEBSITE;
 }
 
-export default async function AdminLeadsPage({
-  searchParams,
-}: AdminLeadsPageProps) {
+export default async function AdminLeadsPage() {
   const sourceOptions = [
     { label: "Website Leads", value: LeadSource.WEBSITE },
-    { label: "Instagram Leads", value: LeadSource.INSTAGRAM },
   ];
-  const params = await searchParams;
-  const selectedSource = parseLeadSource(params.source);
+  const selectedSource = parseLeadSource();
 
   // Fetch agents directory
   const agents = await db.user.findMany({
@@ -126,11 +109,7 @@ export default async function AdminLeadsPage({
       },
     };
 
-    if (selectedSource === LeadSource.WEBSITE) {
-      leads = await db.websiteLead.findMany(queryArgs);
-    } else {
-      leads = await db.instagramLead.findMany(queryArgs);
-    }
+    leads = await db.websiteLead.findMany(queryArgs);
   } catch (err) {
     console.error("Error querying database leads in admin panel:", err);
   }

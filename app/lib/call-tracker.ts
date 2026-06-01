@@ -16,7 +16,7 @@ export type CallTrackerEventInput = {
   eventId: string;
   deviceId: string;
   companyPhone: string;
-  caller: string;
+  caller?: string;
   eventType: CallEventType;
   occurredAt: Date;
   rawPayload: Prisma.InputJsonValue;
@@ -190,8 +190,8 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
   const callerNumber = normalizeIndianPhoneNumber(input.caller);
   const companyPhoneNumber = normalizeIndianPhoneNumber(input.companyPhone);
 
-  if (!callerNumber || !companyPhoneNumber) {
-    throw new Error("Valid caller and companyPhone values are required.");
+  if (!companyPhoneNumber) {
+    throw new Error("A valid companyPhone value is required.");
   }
 
   const duplicateEvent = await db.callEvent.findUnique({
@@ -220,28 +220,36 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
   }
 
   return db.$transaction(async (tx) => {
+    const latestOpenSession = await tx.callSession.findFirst({
+      where: {
+        companyPhoneId: companyPhone.id,
+        status: { in: [...openSessionStatuses] },
+        endedAt: null,
+      },
+      include: {
+        lead: true,
+      },
+      orderBy: { firstRingAt: "desc" },
+    });
+    const effectiveCallerNumber =
+      callerNumber || latestOpenSession?.callerNumber || `UNKNOWN-${companyPhone.id}`;
+    const isUnknownCaller = effectiveCallerNumber.startsWith("UNKNOWN-");
+
     const lead = await tx.callLead.upsert({
-      where: { phone: callerNumber },
+      where: { phone: effectiveCallerNumber },
       update: {
         lastCompanyPhone: companyPhone.phoneNumber,
       },
       create: {
-        phone: callerNumber,
-        displayName: `Caller ${callerNumber.slice(-4)}`,
+        phone: effectiveCallerNumber,
+        displayName: isUnknownCaller ? "Unknown Caller" : `Caller ${effectiveCallerNumber.slice(-4)}`,
         firstCompanyPhone: companyPhone.phoneNumber,
         lastCompanyPhone: companyPhone.phoneNumber,
       },
     });
 
-    const openSession = await tx.callSession.findFirst({
-      where: {
-        companyPhoneId: companyPhone.id,
-        callerNumber,
-        status: { in: [...openSessionStatuses] },
-        endedAt: null,
-      },
-      orderBy: { firstRingAt: "desc" },
-    });
+    const openSession =
+      latestOpenSession?.callerNumber === effectiveCallerNumber ? latestOpenSession : null;
 
     const existingAnsweredAt = openSession?.answeredAt ?? null;
     const answeredAt =
@@ -272,7 +280,7 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
       : await tx.callSession.create({
           data: {
             companyPhoneId: companyPhone.id,
-            callerNumber,
+            callerNumber: effectiveCallerNumber,
             leadId: lead.id,
             firstRingAt: input.occurredAt,
             answeredAt,
@@ -287,7 +295,7 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
         eventId: input.eventId,
         companyPhoneId: companyPhone.id,
         sessionId: session.id,
-        callerNumber,
+        callerNumber: effectiveCallerNumber,
         eventType: input.eventType,
         occurredAt: input.occurredAt,
         rawPayload: input.rawPayload,
@@ -299,11 +307,11 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
         leadId: lead.id,
         sessionId: session.id,
         actionType: eventActivityType(input.eventType),
-        description: `Call event ${input.eventType} from ${callerNumber} to ${companyPhone.phoneNumber}`,
+        description: `Call event ${input.eventType} from ${effectiveCallerNumber} to ${companyPhone.phoneNumber}`,
         metadata: {
           eventId: input.eventId,
           companyPhone: companyPhone.phoneNumber,
-          caller: callerNumber,
+          caller: effectiveCallerNumber,
         },
       },
     });

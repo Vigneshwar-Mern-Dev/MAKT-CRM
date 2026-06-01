@@ -322,11 +322,7 @@ function updateInstagramLead(body) {
   }
 
   const headers = sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].map(h => String(h).trim());
-  const rowNumber = findInstagramLeadRow(sh, headers, lead);
-
-  if (!rowNumber) {
-    return json({ ok: false, error: "Instagram lead row not found for " + lead.atmId });
-  }
+  let rowNumber = findInstagramLeadRow(sh, headers, lead);
 
   const columns = {
     atmId: ensureColumn(sh, headers, ["ATM-ID", "ATM ID", "atmId", "AtmId", "crmId"], "ATM-ID"),
@@ -341,6 +337,10 @@ function updateInstagramLead(body) {
     nextFollowUpAt: ensureColumn(sh, headers, ["Next Follow-up", "Next Follow Up", "nextFollowUpAt", "Follow-up Date"], "Next Follow-up"),
     lastContactedAt: ensureColumn(sh, headers, ["Last Contacted At", "lastContactedAt", "Last Call At"], "Last Contacted At")
   };
+
+  if (!rowNumber) {
+    rowNumber = Math.max(sh.getLastRow() + 1, 2);
+  }
 
   const updates = [
     [columns.atmId, lead.atmId],

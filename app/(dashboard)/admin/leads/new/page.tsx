@@ -3,25 +3,15 @@ import { LEAD_ACTIVITY_PREVIEW_LIMIT, LEAD_LIST_LIMIT } from "@/app/lib/query-li
 import { LeadSource } from "@/app/lib/prisma-enums";
 import { LeadPage, LeadRow } from "../lead-page";
 
-type PageProps = {
-  searchParams: Promise<{
-    source?: string;
-  }>;
-};
-
-function parseLeadSource(value: string | undefined) {
-  return value === LeadSource.INSTAGRAM
-    ? LeadSource.INSTAGRAM
-    : LeadSource.WEBSITE;
+function parseLeadSource() {
+  return LeadSource.WEBSITE;
 }
 
-export default async function AdminNewLeadsPage({ searchParams }: PageProps) {
+export default async function AdminNewLeadsPage() {
   const sourceOptions = [
     { label: "Website Leads", value: LeadSource.WEBSITE },
-    { label: "Instagram Leads", value: LeadSource.INSTAGRAM },
   ];
-  const params = await searchParams;
-  const selectedSource = parseLeadSource(params.source);
+  const selectedSource = parseLeadSource();
 
   // Fetch agents directory
   const agents = await db.user.findMany({
@@ -55,11 +45,7 @@ export default async function AdminNewLeadsPage({ searchParams }: PageProps) {
       },
     };
 
-    if (selectedSource === LeadSource.WEBSITE) {
-      leads = await db.websiteLead.findMany(queryArgs);
-    } else {
-      leads = await db.instagramLead.findMany(queryArgs);
-    }
+    leads = await db.websiteLead.findMany(queryArgs);
   } catch (err) {
     console.error("Error querying new leads:", err);
   }
