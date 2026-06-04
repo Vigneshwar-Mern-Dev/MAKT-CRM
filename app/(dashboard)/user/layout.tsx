@@ -15,7 +15,9 @@ export default async function UserLayout({
     <UserShell
       user={user}
       workload={{
-        followups: workload.totalFollowups,
+        leadFollowups: workload.leadFollowups,
+        callFollowups: workload.callFollowups,
+        callOpenLeads: workload.callOpenLeads,
         openTasks: workload.openTasks,
         overdueTasks: workload.overdueTasks,
       }}

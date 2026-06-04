@@ -26,7 +26,7 @@ function parseLeadSource(value: string) {
 }
 
 function defaultSheetName(source: LeadSource) {
-  return source === "WEBSITE" ? "Website Leads" : "Instagram Leads";
+  return source === "WEBSITE" ? "Leads" : "calls";
 }
 
 function settingsRedirect(params: string): never {

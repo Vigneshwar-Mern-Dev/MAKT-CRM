@@ -13,7 +13,7 @@ export default async function UserDashboard() {
     ["Overdue", data.overdueTasks, "Needs attention"],
   ] as const;
   const focusItems = [
-    ["Lead follow-ups", String(data.totalFollowups), "Next customer touches"],
+    ["All follow-ups", String(data.totalFollowups), "Website and call lead touches"],
     ["Campaign replies", "0", "New responses"],
     ["Customer tasks", String(data.totalTasks), "Assigned task load"],
   ] as const;

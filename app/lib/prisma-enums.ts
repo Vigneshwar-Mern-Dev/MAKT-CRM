@@ -5,6 +5,7 @@ import type {
   Role as PrismaRole,
   SheetConnectionStatus as PrismaSheetConnectionStatus,
   CallActivityType as PrismaCallActivityType,
+  CallDirection as PrismaCallDirection,
   CallEventType as PrismaCallEventType,
   CallLeadStatus as PrismaCallLeadStatus,
   CallSessionStatus as PrismaCallSessionStatus,
@@ -20,6 +21,7 @@ export type LeadStage = PrismaLeadStage;
 export type LeadActivityType = PrismaLeadActivityType;
 export type SheetConnectionStatus = PrismaSheetConnectionStatus;
 export type CallEventType = PrismaCallEventType;
+export type CallDirection = PrismaCallDirection;
 export type CallSessionStatus = PrismaCallSessionStatus;
 export type CallLeadStatus = PrismaCallLeadStatus;
 export type CallActivityType = PrismaCallActivityType;
@@ -83,6 +85,12 @@ export const CallEventType = {
   ENDED: "ENDED",
   MISSED: "MISSED",
 } as const satisfies Record<PrismaCallEventType, PrismaCallEventType>;
+
+export const CallDirection = {
+  INCOMING: "INCOMING",
+  OUTGOING: "OUTGOING",
+  UNKNOWN: "UNKNOWN",
+} as const satisfies Record<PrismaCallDirection, PrismaCallDirection>;
 
 export const CallSessionStatus = {
   RINGING: "RINGING",

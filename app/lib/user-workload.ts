@@ -1,7 +1,7 @@
 import { cache } from "react";
 import type { TaskStatus as TaskStatusType } from "@/app/lib/prisma-enums";
 import { db } from "@/app/lib/db";
-import { LeadStage, TaskStatus } from "@/app/lib/prisma-enums";
+import { CallLeadStatus, LeadStage, TaskStatus } from "@/app/lib/prisma-enums";
 
 export type UserWorkloadSummary = {
   totalTasks: number;
@@ -11,6 +11,9 @@ export type UserWorkloadSummary = {
   openTasks: number;
   overdueTasks: number;
   totalFollowups: number;
+  leadFollowups: number;
+  callFollowups: number;
+  callOpenLeads: number;
 };
 
 const emptyWorkload: UserWorkloadSummary = {
@@ -21,6 +24,9 @@ const emptyWorkload: UserWorkloadSummary = {
   openTasks: 0,
   overdueTasks: 0,
   totalFollowups: 0,
+  leadFollowups: 0,
+  callFollowups: 0,
+  callOpenLeads: 0,
 };
 
 export const getUserWorkloadSummary = cache(async (userId: string) => {
@@ -30,6 +36,8 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
       overdueTasks,
       websiteFollowups,
       instagramFollowups,
+      callFollowups,
+      callOpenLeads,
     ] = await Promise.all([
       db.task.groupBy({
         by: ["status"],
@@ -49,6 +57,23 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
       db.instagramLead.count({
         where: { assignedToId: userId, stage: LeadStage.FOLLOW_UP },
       }),
+      db.callFollowUp.count({
+        where: { assignedToId: userId, completedAt: null },
+      }),
+      db.callLead.count({
+        where: {
+          assignedToId: userId,
+          status: {
+            in: [
+              CallLeadStatus.NEW,
+              CallLeadStatus.CONTACTED,
+              CallLeadStatus.FOLLOW_UP,
+              CallLeadStatus.INTERESTED,
+              CallLeadStatus.NO_RESPONSE,
+            ],
+          },
+        },
+      }),
     ]);
 
     const taskCounts: Record<TaskStatusType, number> = {
@@ -65,6 +90,8 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
     const openTasks =
       taskCounts.PENDING + taskCounts.IN_PROGRESS;
 
+    const leadFollowups = websiteFollowups + instagramFollowups;
+
     return {
       data: {
         totalTasks:
@@ -77,7 +104,10 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
         completedTasks: taskCounts.COMPLETED,
         openTasks,
         overdueTasks,
-        totalFollowups: websiteFollowups + instagramFollowups,
+        totalFollowups: leadFollowups + callFollowups,
+        leadFollowups,
+        callFollowups,
+        callOpenLeads,
       },
       error: null,
     };

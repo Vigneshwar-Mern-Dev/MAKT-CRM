@@ -1,110 +1,365 @@
 import Link from "next/link";
 import { db } from "@/app/lib/db";
-import { CallStatusBadge, EmptyState, PageHeader, StatCard, TopLink, formatDateTime } from "./call-ui";
+import { expireStaleRingingCalls } from "@/app/lib/call-session-maintenance";
+import {
+  CallCenterTabs,
+  CallStatusBadge,
+  EmptyState,
+  PageHeader,
+  Panel,
+  PanelTitle,
+  StatCard,
+  StatusBadge,
+  TopLink,
+  formatDateTime,
+  formatDuration,
+} from "./call-ui";
 
 export default async function AdminCallCenterPage() {
-  const today = new Date();
+  await expireStaleRingingCalls();
+
+  const currentTime = new Date();
+  const today = new Date(currentTime);
   today.setHours(0, 0, 0, 0);
 
-  const [
-    totalSessions,
-    todaySessions,
-    missedSessions,
-    liveSessions,
-    callLeads,
-    phones,
-    recentSessions,
-  ] = await Promise.all([
-    db.callSession.count(),
-    db.callSession.count({ where: { firstRingAt: { gte: today } } }),
-    db.callSession.count({ where: { status: "MISSED" } }),
-    db.callSession.count({ where: { status: { in: ["RINGING", "ANSWERED"] }, endedAt: null } }),
-    db.callLead.count(),
-    db.companyPhone.count({ where: { isActive: true } }),
-    db.callSession.findMany({
-      include: {
-        companyPhone: { select: { phoneNumber: true, label: true } },
-        lead: { select: { id: true, phone: true, displayName: true } },
-      },
-      orderBy: { firstRingAt: "desc" },
-      take: 8,
+  const stalePhoneThreshold = new Date(currentTime.getTime() - 15 * 60 * 1000);
+  const actionableLeadStatuses = ["NEW", "CONTACTED", "FOLLOW_UP", "INTERESTED", "NO_RESPONSE"] as const;
+  const outcomeStatuses = ["NOT_INTERESTED", "CONVERTED", "CLOSED"] as const;
+
+  const [todaySessions, missedSessions, liveSessions, callLeads, phones, unhealthyPhones, recentSessions, agents] =
+    await Promise.all([
+      db.callSession.count({ where: { firstRingAt: { gte: today } } }),
+      db.callSession.count({
+        where: {
+          status: "MISSED",
+          lead: { status: { in: [...actionableLeadStatuses] } },
+        },
+      }),
+      db.callSession.count({ where: { status: { in: ["RINGING", "ANSWERED"] }, endedAt: null } }),
+      db.callLead.count({
+        where: { phone: { not: { startsWith: "UNKNOWN-" } }, status: { in: [...actionableLeadStatuses] } },
+      }),
+      db.companyPhone.count({ where: { isActive: true } }),
+      db.companyPhone.count({
+        where: {
+          isActive: true,
+          OR: [
+            { lastSeenAt: null },
+            { lastSeenAt: { lt: stalePhoneThreshold } },
+            { batteryPercent: { lt: 20 } },
+            { pendingSyncCount: { gt: 0 } },
+          ],
+        },
+      }),
+      db.callSession.findMany({
+        where: { callerNumber: { not: { startsWith: "UNKNOWN-" } } },
+        include: {
+          companyPhone: { select: { phoneNumber: true, label: true } },
+          lead: { select: { id: true, phone: true, displayName: true } },
+        },
+        orderBy: { firstRingAt: "desc" },
+        take: 8,
+      }),
+      db.user.findMany({
+        where: { role: "USER" },
+        orderBy: { username: "asc" },
+        select: { id: true, username: true, email: true },
+      }),
+    ]);
+
+  const agentRows = await Promise.all(
+    agents.map(async (agent) => {
+      const assignedFilter = {
+        OR: [
+          { assignedToId: agent.id },
+          { lead: { assignedToId: agent.id } },
+        ],
+      };
+
+      const [
+        ownedLeads,
+        openLeads,
+        claimedToday,
+        sheetSavedToday,
+        outgoingCallsToday,
+        live,
+        missed,
+        completed,
+        followUps,
+        outcomesToday,
+        detailUpdatesToday,
+        workflowUpdatesToday,
+        recentWork,
+        lastSession,
+      ] = await Promise.all([
+        db.callLead.count({ where: { assignedToId: agent.id } }),
+        db.callLead.count({ where: { assignedToId: agent.id, status: { in: [...actionableLeadStatuses] } } }),
+        db.callActivity.count({
+          where: {
+            userId: agent.id,
+            actionType: "ASSIGNMENT_CHANGE",
+            description: { contains: "claimed" },
+            createdAt: { gte: today },
+          },
+        }),
+        db.callLead.count({ where: { assignedToId: agent.id, sheetSyncedAt: { gte: today } } }),
+        db.callSession.count({ where: { firstRingAt: { gte: today }, callDirection: "OUTGOING", ...assignedFilter } }),
+        db.callSession.count({ where: { status: { in: ["RINGING", "ANSWERED"] }, endedAt: null, ...assignedFilter } }),
+        db.callSession.count({ where: { status: "MISSED", ...assignedFilter } }),
+        db.callSession.count({ where: { status: "COMPLETED", callDirection: "OUTGOING", ...assignedFilter } }),
+        db.callFollowUp.count({ where: { assignedToId: agent.id, completedAt: null } }),
+        db.callLead.count({ where: { assignedToId: agent.id, status: { in: [...outcomeStatuses] }, updatedAt: { gte: today } } }),
+        db.callActivity.count({
+          where: {
+            userId: agent.id,
+            actionType: "NOTE_ADDED",
+            description: "Call lead customer details updated",
+            createdAt: { gte: today },
+          },
+        }),
+        db.callActivity.count({
+          where: {
+            userId: agent.id,
+            OR: [
+              { actionType: "FOLLOW_UP_UPDATE" },
+              { actionType: "NOTE_ADDED", description: { startsWith: "Call lead status updated" } },
+            ],
+            createdAt: { gte: today },
+          },
+        }),
+        db.callActivity.findMany({
+          where: {
+            userId: agent.id,
+            actionType: { in: ["ASSIGNMENT_CHANGE", "FOLLOW_UP_UPDATE", "NOTE_ADDED"] },
+            NOT: { description: { startsWith: "Saved in CRM only" } },
+            createdAt: { gte: today },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          select: {
+            id: true,
+            actionType: true,
+            description: true,
+            createdAt: true,
+            lead: { select: { displayName: true, phone: true } },
+          },
+        }),
+        db.callSession.findFirst({
+          where: assignedFilter,
+          orderBy: { firstRingAt: "desc" },
+          select: {
+            firstRingAt: true,
+            status: true,
+            durationSeconds: true,
+            lead: { select: { displayName: true, phone: true } },
+          },
+        }),
+      ]);
+
+      return {
+        ...agent,
+        ownedLeads,
+        openLeads,
+        claimedToday,
+        workedToday: claimedToday + detailUpdatesToday + workflowUpdatesToday,
+        sheetSavedToday,
+        outgoingCallsToday,
+        live,
+        missed,
+        completed,
+        followUps,
+        outcomesToday,
+        detailUpdatesToday,
+        workflowUpdatesToday,
+        recentWork,
+        lastSession,
+      };
     }),
-  ]);
+  );
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="space-y-5 pb-8">
       <PageHeader
         actions={
           <>
-            <TopLink href="/admin/calls/live">Live calls</TopLink>
-            <TopLink href="/admin/calls/missed">Missed calls</TopLink>
+            <TopLink href="/admin/calls/missed" primary>Open callback queue</TopLink>
           </>
         }
-        description="Call tracker data from company Android phones, kept separate from website and Instagram lead queues."
-        title="Call Center"
+        description="Monitor incoming activity, clear missed-call callbacks, and keep every company phone ready to receive calls."
+        title="Call center overview"
       />
+      <CallCenterTabs />
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard detail="All tracked call sessions" label="Total calls" value={totalSessions} />
-        <StatCard detail="Since midnight" label="Calls today" value={todaySessions} />
-        <StatCard detail="Callback required" label="Missed calls" value={missedSessions} />
-        <StatCard detail="Registered active phones" label="Company phones" value={phones} />
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard detail="Incoming sessions since midnight" label="Calls today" value={todaySessions} />
+        <StatCard detail="Ringing or currently connected" label="Live now" tone="emerald" value={liveSessions} />
+        <StatCard detail="Missed sessions on open leads" label="Needs callback" tone="rose" value={missedSessions} />
+        <StatCard detail={`${unhealthyPhones} device${unhealthyPhones === 1 ? "" : "s"} need attention`} label="Phones online" tone={unhealthyPhones ? "amber" : "cyan"} value={`${phones - unhealthyPhones}/${phones}`} />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Recent call sessions</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Latest incoming phone activity across registered company phones.
-              </p>
-            </div>
-            <CallStatusBadge status={`${liveSessions} LIVE`} />
-          </div>
-
-          <div className="mt-4 divide-y divide-white/10">
+      <section className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">
+        <Panel>
+          <PanelTitle
+            action={<Link className="text-xs font-bold text-cyan-200 hover:text-cyan-100" href="/admin/calls/leads">View all leads</Link>}
+            description="Latest activity across registered company phones."
+            title="Recent call activity"
+          />
+          <div className="divide-y divide-white/10">
             {recentSessions.map((session) => (
-              <div className="grid gap-3 py-3 text-sm md:grid-cols-[1fr_auto_auto]" key={session.id}>
+              <div className="grid gap-3 px-5 py-4 text-sm sm:grid-cols-[1fr_auto_auto] sm:items-center" key={session.id}>
                 <div className="min-w-0">
-                  <p className="truncate font-semibold text-white">
-                    {session.lead.displayName} · {session.lead.phone}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {session.companyPhone.label} · {session.companyPhone.phoneNumber}
+                  <p className="truncate font-bold text-white">{session.lead.displayName}</p>
+                  <p className="mt-1 truncate text-xs text-slate-500">
+                    {session.lead.phone} <span className="px-1 text-slate-700">/</span> {session.companyPhone.label}
                   </p>
                 </div>
                 <CallStatusBadge status={session.status} />
-                <p className="text-xs text-slate-500 md:text-right">
-                  {formatDateTime(session.firstRingAt)}
-                </p>
+                <div className="text-xs text-slate-500 sm:text-right">
+                  <p>{formatDateTime(session.firstRingAt)}</p>
+                  <p className="mt-1">{formatDuration(session.durationSeconds)}</p>
+                </div>
               </div>
             ))}
             {!recentSessions.length ? <EmptyState>No call sessions received yet.</EmptyState> : null}
           </div>
-        </div>
+        </Panel>
 
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <h2 className="text-lg font-semibold text-white">Call workflow</h2>
-          <div className="mt-4 grid gap-3">
+        <Panel>
+          <PanelTitle description="Work the queue in this order." title="Operator focus" />
+          <div className="space-y-3 p-4">
             {[
-              ["/admin/calls/live", "Live Calls", "Ringing and active calls"],
-              ["/admin/calls/missed", "Missed Calls", "Callback queue"],
-              ["/admin/calls/leads", "Call Leads", `${callLeads} phone leads`],
-              ["/admin/calls/phones", "Company Phones", `${phones} active devices`],
-            ].map(([href, label, detail]) => (
-              <Link
-                className="rounded-lg border border-white/5 bg-black/30 px-4 py-3 transition hover:bg-white/5"
-                href={href}
-                key={href}
-              >
-                <p className="font-semibold text-white">{label}</p>
-                <p className="mt-1 text-xs text-slate-500">{detail}</p>
+              ["/admin/calls/missed", "01", "Handle call queue", `${liveSessions} live / ${missedSessions} callbacks`, liveSessions ? "emerald" : missedSessions ? "rose" : "slate"],
+              ["/admin/calls/leads", "02", "Update call leads", `${callLeads} open leads`, callLeads ? "cyan" : "slate"],
+              ["/admin/calls/phones", "03", "Check company phones", `${unhealthyPhones} need attention`, unhealthyPhones ? "amber" : "slate"],
+            ].map(([href, step, label, detail, tone]) => (
+              <Link className="group flex items-center gap-3 rounded-xl border border-white/5 bg-black/20 p-3 transition hover:border-white/15 hover:bg-white/5" href={href} key={href}>
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/5 text-xs font-black text-slate-500">{step}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold text-white">{label}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{detail}</span>
+                </span>
+                <StatusBadge tone={tone as "slate" | "cyan" | "emerald" | "amber" | "rose"}>Open</StatusBadge>
               </Link>
             ))}
           </div>
-        </div>
+        </Panel>
       </section>
+
+      <Panel>
+        <PanelTitle
+          description="Today summary by user. Claimed means the user took an open lead; work means lead saves, workflow updates, or sheet saves by that user."
+          title="Agent call details"
+        />
+        <div className="overflow-x-auto">
+          <div className="min-w-[1360px]">
+            <div className="grid grid-cols-[0.65fr_1fr_0.65fr_0.65fr_0.65fr_0.7fr_0.7fr_0.75fr_0.65fr_0.65fr_0.75fr_0.75fr_1.2fr] gap-3 border-b border-white/10 px-5 py-3 text-xs font-semibold text-slate-400">
+              <span>Date</span>
+              <span>Agent</span>
+              <span>Owned</span>
+              <span>Open leads</span>
+              <span>Claimed</span>
+              <span>Work</span>
+              <span>Sheet</span>
+              <span>Outgoing</span>
+              <span>Live</span>
+              <span>Missed</span>
+              <span>Outcomes</span>
+              <span>Follow-ups</span>
+              <span>Last activity</span>
+            </div>
+            <div className="divide-y divide-white/10">
+              {agentRows.map((agent) => (
+                <details className="group" key={agent.id}>
+                  <summary className="grid cursor-pointer list-none grid-cols-[0.65fr_1fr_0.65fr_0.65fr_0.65fr_0.7fr_0.7fr_0.75fr_0.65fr_0.65fr_0.75fr_0.75fr_1.2fr] items-center gap-3 px-5 py-4 text-sm transition hover:bg-white/[0.03] [&::-webkit-details-marker]:hidden">
+                    <span className="text-slate-400">{currentTime.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</span>
+                    <div className="min-w-0">
+                      <Link className="truncate font-bold text-white transition hover:text-cyan-100 hover:underline" href={`/admin/calls/leads?agent=${agent.id}`}>
+                        {agent.username}
+                      </Link>
+                      <p className="mt-1 truncate text-xs text-slate-500">{agent.email}</p>
+                    </div>
+                    <span className={agent.ownedLeads ? "font-bold text-white" : "text-slate-500"}>{agent.ownedLeads}</span>
+                    <Link className="font-bold text-cyan-100 transition hover:text-cyan-50 hover:underline" href={`/admin/calls/leads?agent=${agent.id}`}>
+                      {agent.openLeads}
+                    </Link>
+                    <span className={agent.claimedToday ? "font-bold text-cyan-100" : "text-slate-500"}>{agent.claimedToday}</span>
+                    <span className={agent.workedToday ? "font-bold text-white" : "text-slate-500"}>{agent.workedToday}</span>
+                    <span className={agent.sheetSavedToday ? "font-bold text-emerald-200" : "text-slate-500"}>{agent.sheetSavedToday}</span>
+                    <div>
+                      <p className="font-bold text-white">{agent.outgoingCallsToday}</p>
+                      <p className="mt-1 text-xs text-slate-500">{agent.completed} completed</p>
+                    </div>
+                    <span className={agent.live ? "font-bold text-emerald-200" : "text-slate-500"}>{agent.live}</span>
+                    <span className={agent.missed ? "font-bold text-rose-200" : "text-slate-500"}>{agent.missed}</span>
+                    <span className={agent.outcomesToday ? "font-bold text-amber-100" : "text-slate-500"}>{agent.outcomesToday}</span>
+                    <span className={agent.followUps ? "font-bold text-amber-100" : "text-slate-500"}>{agent.followUps}</span>
+                    <div className="min-w-0 text-xs">
+                      {agent.lastSession ? (
+                        <>
+                          <p className="truncate font-semibold text-slate-200">{agent.lastSession.lead.displayName}</p>
+                          <p className="mt-1 truncate text-slate-500">
+                            {agent.lastSession.status.replaceAll("_", " ")} <span className="px-1 text-slate-700">/</span> {formatDateTime(agent.lastSession.firstRingAt)} <span className="px-1 text-slate-700">/</span> {formatDuration(agent.lastSession.durationSeconds)}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-slate-500">No call activity</p>
+                      )}
+                    </div>
+                  </summary>
+                  <div className="border-t border-white/10 bg-black/20 px-5 py-4">
+                    <div className="grid gap-3 lg:grid-cols-[0.9fr_0.9fr_1.2fr]">
+                      <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                        <h3 className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100">Today work</h3>
+                        <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                          <dt className="text-slate-500">Claimed leads</dt>
+                          <dd className="font-bold text-white">{agent.claimedToday}</dd>
+                          <dt className="text-slate-500">Detail edits</dt>
+                          <dd className="font-bold text-white">{agent.detailUpdatesToday}</dd>
+                          <dt className="text-slate-500">Workflow/notes</dt>
+                          <dd className="font-bold text-white">{agent.workflowUpdatesToday}</dd>
+                          <dt className="text-slate-500">Sheet saves</dt>
+                          <dd className="font-bold text-white">{agent.sheetSavedToday}</dd>
+                          <dt className="text-slate-500">Outcomes</dt>
+                          <dd className="font-bold text-white">{agent.outcomesToday}</dd>
+                        </dl>
+                      </div>
+                      <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                        <h3 className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100">Lead and call load</h3>
+                        <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                          <dt className="text-slate-500">Owned leads</dt>
+                          <dd className="font-bold text-white">{agent.ownedLeads}</dd>
+                          <dt className="text-slate-500">Still open</dt>
+                          <dd className="font-bold text-white">{agent.openLeads}</dd>
+                          <dt className="text-slate-500">Outgoing calls</dt>
+                          <dd className="font-bold text-white">{agent.outgoingCallsToday}</dd>
+                          <dt className="text-slate-500">Completed calls</dt>
+                          <dd className="font-bold text-white">{agent.completed}</dd>
+                          <dt className="text-slate-500">Live / missed</dt>
+                          <dd className="font-bold text-white">{agent.live} / {agent.missed}</dd>
+                        </dl>
+                      </div>
+                      <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
+                        <h3 className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100">Recent user activity</h3>
+                        <div className="mt-3 space-y-3">
+                          {agent.recentWork.map((activity) => (
+                            <div className="text-xs" key={activity.id}>
+                              <p className="font-bold text-white">{activity.lead.displayName}</p>
+                              <p className="mt-1 text-slate-500">{activity.description}</p>
+                              <p className="mt-1 text-slate-600">{formatDateTime(activity.createdAt)}</p>
+                            </div>
+                          ))}
+                          {!agent.recentWork.length ? <p className="text-xs text-slate-500">No user work recorded today.</p> : null}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              ))}
+              {!agentRows.length ? <EmptyState>No users found for call center summary.</EmptyState> : null}
+            </div>
+          </div>
+        </div>
+      </Panel>
     </div>
   );
 }

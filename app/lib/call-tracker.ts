@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
-import type { CallEventType, Prisma } from "@prisma/client";
+import type { CallDirection, CallEventType, Prisma } from "@prisma/client";
 import { db } from "./db";
 
 const openSessionStatuses = ["RINGING", "ANSWERED"] as const;
@@ -14,11 +14,23 @@ export type RegisterCompanyPhoneInput = {
 
 export type CallTrackerEventInput = {
   eventId: string;
+  callSessionLocalId?: string;
   deviceId: string;
   companyPhone: string;
   caller?: string;
   eventType: CallEventType;
+  callDirection: CallDirection;
   occurredAt: Date;
+  durationSeconds?: number;
+  androidCallLogId?: string;
+  simSlot?: number;
+  appVersion?: string;
+  androidVersion?: string;
+  deviceModel?: string;
+  batteryPercent?: number;
+  networkType?: string;
+  pendingSyncCount?: number;
+  permissionStatus?: Prisma.InputJsonValue;
   rawPayload: Prisma.InputJsonValue;
 };
 
@@ -186,9 +198,54 @@ function sessionStatusForEvent(eventType: CallEventType, wasAnswered: boolean) {
   return wasAnswered ? ("COMPLETED" as const) : ("MISSED" as const);
 }
 
+function cleanText(value: string | undefined) {
+  return value?.trim() || undefined;
+}
+
+function findOpenSessionArgs(input: {
+  companyPhoneId: string;
+  callerNumber: string | null;
+  localSessionId?: string;
+}) {
+  const openWhere = {
+    companyPhoneId: input.companyPhoneId,
+    status: { in: [...openSessionStatuses] },
+    endedAt: null,
+  };
+
+  if (input.localSessionId) {
+    return {
+      where: {
+        ...openWhere,
+        localSessionId: input.localSessionId,
+      },
+      include: { lead: true },
+      orderBy: { firstRingAt: "desc" as const },
+    };
+  }
+
+  if (input.callerNumber) {
+    return {
+      where: {
+        ...openWhere,
+        callerNumber: input.callerNumber,
+      },
+      include: { lead: true },
+      orderBy: { firstRingAt: "desc" as const },
+    };
+  }
+
+  return {
+    where: openWhere,
+    include: { lead: true },
+    orderBy: { firstRingAt: "desc" as const },
+  };
+}
+
 export async function ingestCallEvent(input: CallTrackerEventInput) {
   const callerNumber = normalizeIndianPhoneNumber(input.caller);
   const companyPhoneNumber = normalizeIndianPhoneNumber(input.companyPhone);
+  const localSessionId = cleanText(input.callSessionLocalId);
 
   if (!companyPhoneNumber) {
     throw new Error("A valid companyPhone value is required.");
@@ -220,20 +277,59 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
   }
 
   return db.$transaction(async (tx) => {
-    const latestOpenSession = await tx.callSession.findFirst({
-      where: {
+    const latestOpenSession = await tx.callSession.findFirst(
+      findOpenSessionArgs({
         companyPhoneId: companyPhone.id,
-        status: { in: [...openSessionStatuses] },
-        endedAt: null,
-      },
-      include: {
-        lead: true,
-      },
-      orderBy: { firstRingAt: "desc" },
-    });
+        callerNumber,
+        localSessionId,
+      }),
+    );
+    const recentRecoverableSession =
+      !latestOpenSession &&
+      callerNumber &&
+      (input.eventType === "ANSWERED" || input.eventType === "ENDED")
+        ? await tx.callSession.findFirst({
+            where: {
+              companyPhoneId: companyPhone.id,
+              callerNumber,
+              status: "MISSED",
+              firstRingAt: {
+                gte: new Date(input.occurredAt.getTime() - 5 * 60 * 1000),
+              },
+            },
+            include: { lead: true },
+            orderBy: { firstRingAt: "desc" },
+          })
+        : null;
+
+    if (!callerNumber && !latestOpenSession && !recentRecoverableSession) {
+      await tx.companyPhone.update({
+        where: { id: companyPhone.id },
+        data: {
+          lastSeenAt: new Date(),
+          appVersion: cleanText(input.appVersion),
+          androidVersion: cleanText(input.androidVersion),
+          deviceModel: cleanText(input.deviceModel),
+          batteryPercent: input.batteryPercent,
+          networkType: cleanText(input.networkType),
+          pendingSyncCount: input.pendingSyncCount,
+          permissionStatus: input.permissionStatus,
+        },
+      });
+
+      return {
+        duplicate: false,
+        ignored: true,
+        reason: "caller_missing_without_open_session",
+      };
+    }
+
     const effectiveCallerNumber =
-      callerNumber || latestOpenSession?.callerNumber || `UNKNOWN-${companyPhone.id}`;
-    const isUnknownCaller = effectiveCallerNumber.startsWith("UNKNOWN-");
+      callerNumber || latestOpenSession?.callerNumber || recentRecoverableSession?.callerNumber;
+
+    if (!effectiveCallerNumber) {
+      throw new Error("Caller number could not be resolved.");
+    }
 
     const lead = await tx.callLead.upsert({
       where: { phone: effectiveCallerNumber },
@@ -242,62 +338,96 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
       },
       create: {
         phone: effectiveCallerNumber,
-        displayName: isUnknownCaller ? "Unknown Caller" : `Caller ${effectiveCallerNumber.slice(-4)}`,
+        displayName: `Caller ${effectiveCallerNumber.slice(-4)}`,
         firstCompanyPhone: companyPhone.phoneNumber,
         lastCompanyPhone: companyPhone.phoneNumber,
       },
     });
 
     const openSession =
-      latestOpenSession?.callerNumber === effectiveCallerNumber ? latestOpenSession : null;
+      latestOpenSession?.callerNumber === effectiveCallerNumber
+        ? latestOpenSession
+        : recentRecoverableSession?.callerNumber === effectiveCallerNumber
+          ? recentRecoverableSession
+          : null;
 
     const existingAnsweredAt = openSession?.answeredAt ?? null;
+    const durationSecondsFromLog =
+      input.durationSeconds !== undefined && input.durationSeconds >= 0
+        ? Math.round(input.durationSeconds)
+        : null;
+    const inferredAnsweredAt =
+      input.eventType === "ENDED" &&
+      !existingAnsweredAt &&
+      durationSecondsFromLog &&
+      durationSecondsFromLog > 0
+        ? new Date(input.occurredAt.getTime() - durationSecondsFromLog * 1000)
+        : null;
     const answeredAt =
       input.eventType === "ANSWERED" && !existingAnsweredAt
         ? input.occurredAt
-        : existingAnsweredAt;
+        : existingAnsweredAt || inferredAnsweredAt;
     const endedAt =
-      input.eventType === "ENDED" || input.eventType === "MISSED"
-        ? input.occurredAt
-        : openSession?.endedAt ?? null;
-    const status = sessionStatusForEvent(input.eventType, Boolean(answeredAt));
+      input.eventType === "RINGING" || input.eventType === "ANSWERED"
+        ? null
+        : input.eventType === "ENDED" || input.eventType === "MISSED"
+          ? input.occurredAt
+          : openSession?.endedAt ?? null;
     const durationSeconds =
-      endedAt && answeredAt
+      durationSecondsFromLog ??
+      (endedAt && answeredAt
         ? Math.max(0, Math.round((endedAt.getTime() - answeredAt.getTime()) / 1000))
-        : null;
+        : endedAt && openSession && input.eventType === "ENDED"
+          ? Math.max(0, Math.round((endedAt.getTime() - openSession.firstRingAt.getTime()) / 1000))
+          : null);
+    const status = sessionStatusForEvent(
+      input.eventType,
+      Boolean(answeredAt || (durationSeconds && durationSeconds > 0)),
+    );
 
     const session = openSession
       ? await tx.callSession.update({
           where: { id: openSession.id },
           data: {
+            localSessionId: localSessionId || openSession.localSessionId,
             leadId: lead.id,
+            callDirection: input.callDirection,
             answeredAt,
             endedAt,
             durationSeconds,
             status,
+            androidCallLogId: cleanText(input.androidCallLogId) || openSession.androidCallLogId,
+            simSlot: input.simSlot ?? openSession.simSlot,
           },
         })
       : await tx.callSession.create({
           data: {
+            localSessionId,
             companyPhoneId: companyPhone.id,
             callerNumber: effectiveCallerNumber,
             leadId: lead.id,
+            callDirection: input.callDirection,
             firstRingAt: input.occurredAt,
             answeredAt,
             endedAt,
             durationSeconds,
             status,
+            androidCallLogId: cleanText(input.androidCallLogId),
+            simSlot: input.simSlot,
           },
         });
 
     const event = await tx.callEvent.create({
       data: {
         eventId: input.eventId,
+        localSessionId,
         companyPhoneId: companyPhone.id,
         sessionId: session.id,
         callerNumber: effectiveCallerNumber,
         eventType: input.eventType,
+        callDirection: input.callDirection,
         occurredAt: input.occurredAt,
+        durationSeconds: durationSecondsFromLog,
         rawPayload: input.rawPayload,
       },
     });
@@ -312,13 +442,24 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
           eventId: input.eventId,
           companyPhone: companyPhone.phoneNumber,
           caller: effectiveCallerNumber,
+          localSessionId,
+          durationSeconds,
         },
       },
     });
 
     await tx.companyPhone.update({
       where: { id: companyPhone.id },
-      data: { lastSeenAt: new Date() },
+      data: {
+        lastSeenAt: new Date(),
+        appVersion: cleanText(input.appVersion),
+        androidVersion: cleanText(input.androidVersion),
+        deviceModel: cleanText(input.deviceModel),
+        batteryPercent: input.batteryPercent,
+        networkType: cleanText(input.networkType),
+        pendingSyncCount: input.pendingSyncCount,
+        permissionStatus: input.permissionStatus,
+      },
     });
 
     return {

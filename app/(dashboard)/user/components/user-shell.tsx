@@ -4,6 +4,8 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "@/app/lib/auth-actions";
+import { CallCenterLiveSync } from "../../components/call-center-live-sync";
+import { UserCallPopup } from "./user-call-popup";
 
 type UserShellProps = {
   children: ReactNode;
@@ -12,7 +14,9 @@ type UserShellProps = {
     email: string;
   };
   workload: {
-    followups: number;
+    leadFollowups: number;
+    callFollowups: number;
+    callOpenLeads: number;
     openTasks: number;
     overdueTasks: number;
   };
@@ -51,6 +55,20 @@ const navItems = [
         <path d="m4 6 1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
       </svg>
     ),
+  },
+  {
+    href: "/user/calls",
+    label: "Call Center",
+    icon: (
+      <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24">
+        <path d="M7 4h3l1.5 4-2 1.2a11 11 0 0 0 5.3 5.3l1.2-2 4 1.5v3a2 2 0 0 1-2.2 2A16 16 0 0 1 5 6.2 2 2 0 0 1 7 4Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+      </svg>
+    ),
+    children: [
+      { href: "/user/calls", label: "Overview" },
+      { href: "/user/calls/callbacks", label: "Open Leads" },
+      { href: "/user/calls/assigned", label: "Assigned" },
+    ],
   },
 ];
 
@@ -132,6 +150,7 @@ export function UserShell({ children, user, workload }: UserShellProps) {
   const pathname = usePathname();
   const initials = user.username.slice(0, 2).toUpperCase() || "US";
   const leadCenter = navItems.find((item) => item.href === "/user/leads");
+  const callCenter = navItems.find((item) => item.href === "/user/calls");
   const accentTheme = getUserAccentTheme(user);
   const theme = userThemeBase;
   const themeVars = {
@@ -237,7 +256,9 @@ export function UserShell({ children, user, workload }: UserShellProps) {
             </div>
             <dl className="mt-4 space-y-3">
               {[
-                ["Follow-ups", workload.followups],
+                ["Lead follow-ups", workload.leadFollowups],
+                ["Call follow-ups", workload.callFollowups],
+                ["Call leads", workload.callOpenLeads],
                 ["Open tasks", workload.openTasks],
                 ["Overdue", workload.overdueTasks],
               ].map(([label, value]) => (
@@ -330,11 +351,32 @@ export function UserShell({ children, user, workload }: UserShellProps) {
                 ))}
               </nav>
             ) : null}
+
+            {pathname.startsWith("/user/calls") ? (
+              <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">
+                {callCenter?.children?.map((child) => (
+                  <Link
+                    className={[
+                      "h-9 shrink-0 rounded-lg px-3 text-sm font-medium leading-9",
+                      pathname === child.href
+                        ? "bg-white/10 text-white"
+                        : "border border-white/10 text-zinc-400",
+                    ].join(" ")}
+                    href={child.href}
+                    key={child.href}
+                  >
+                    {child.label}
+                  </Link>
+                ))}
+              </nav>
+            ) : null}
           </header>
 
           <div className="flex-1 overflow-y-auto px-5 py-6 md:px-8 md:py-8">{children}</div>
         </div>
       </div>
+      {pathname.startsWith("/user/calls") ? <CallCenterLiveSync /> : null}
+      <UserCallPopup />
     </main>
   );
 }

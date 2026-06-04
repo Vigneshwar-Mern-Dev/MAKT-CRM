@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/app/lib/db";
+import { expireStaleRingingCalls } from "@/app/lib/call-session-maintenance";
 import { requireUser } from "@/app/lib/session";
 
 export async function GET() {
   await requireUser();
+  await expireStaleRingingCalls();
 
   const calls = await db.callSession.findMany({
     where: {

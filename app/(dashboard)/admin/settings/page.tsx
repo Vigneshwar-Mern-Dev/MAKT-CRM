@@ -20,13 +20,15 @@ const leadSources = [
     title: "Website Leads",
     source: LeadSource.WEBSITE,
     tone: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
-    tab: "Website Leads",
+    tab: "Leads",
+    badge: "WEBSITE",
   },
   {
-    title: "Instagram Leads",
+    title: "Call Leads",
     source: LeadSource.INSTAGRAM,
-    tone: "border-fuchsia-300/20 bg-fuchsia-300/10 text-fuchsia-100",
-    tab: "Instagram Leads",
+    tone: "border-amber-300/20 bg-amber-300/10 text-amber-100",
+    tab: "calls",
+    badge: "CALL",
   },
 ];
 
@@ -48,6 +50,18 @@ function statusClass(status: SheetConnectionStatus) {
   return classes[status];
 }
 
+function sourceNoticeLabel(source: string) {
+  if (source === LeadSource.INSTAGRAM) {
+    return "Call Leads";
+  }
+
+  if (source === LeadSource.WEBSITE) {
+    return "Website Leads";
+  }
+
+  return source;
+}
+
 async function getLeadIntegrations() {
   try {
     const integrations = await db.leadIntegration.findMany();
@@ -66,14 +80,14 @@ export default async function AdminSettingsPage({
   const params = await searchParams;
   const { integrations, error } = await getLeadIntegrations();
   const notice = params.saved
-    ? `${params.saved} sheet settings saved.`
+    ? `${sourceNoticeLabel(params.saved)} sheet settings saved.`
     : params.analyzed
-      ? `${params.analyzed} sheet settings analyzed.`
+      ? `${sourceNoticeLabel(params.analyzed)} sheet settings analyzed.`
       : params.tested
-        ? `${params.tested} sheet test ${params.result === "ok" ? "passed" : "failed"
+        ? `${sourceNoticeLabel(params.tested)} sheet test ${params.result === "ok" ? "passed" : "failed"
         }.`
         : params.synced
-          ? `${params.synced} sheet sync ${params.result === "ok" ? "completed" : "failed"
+          ? `${sourceNoticeLabel(params.synced)} sheet sync ${params.result === "ok" ? "completed" : "failed"
           }.`
           : null;
 
@@ -151,7 +165,7 @@ export default async function AdminSettingsPage({
           <h2 className="text-lg font-semibold">Lead source sheets</h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
             Configure Google Apps Script connections for Website Leads and
-            Instagram Leads. These values are now stored in the database.
+            Call Leads. These values are now stored in the database.
           </p>
         </div>
 
@@ -181,7 +195,7 @@ export default async function AdminSettingsPage({
                   <span
                     className={`rounded-lg border px-2 py-1 text-xs font-semibold ${source.tone}`}
                   >
-                    {source.source}
+                    {source.badge}
                   </span>
                 </div>
 

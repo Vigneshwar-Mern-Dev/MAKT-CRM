@@ -71,6 +71,12 @@ enum CallSessionStatus {
   COMPLETED
 }
 
+enum CallDirection {
+  INCOMING
+  OUTGOING
+  UNKNOWN
+}
+
 enum CallLeadStatus {
   NEW
   CONTACTED
@@ -287,6 +293,13 @@ model CompanyPhone {
   authTokenHash String    @map("auth_token_hash")
   lastSeenAt    DateTime? @map("last_seen_at")
   isActive      Boolean   @default(true) @map("is_active")
+  appVersion    String?   @map("app_version")
+  androidVersion String?  @map("android_version")
+  deviceModel   String?   @map("device_model")
+  batteryPercent Int?     @map("battery_percent")
+  networkType   String?   @map("network_type")
+  pendingSyncCount Int?   @map("pending_sync_count")
+  permissionStatus Json?  @map("permission_status")
 
   events   CallEvent[]
   sessions CallSession[]
@@ -320,6 +333,8 @@ model CallLead {
   sheetSyncedAt   DateTime?      @map("sheet_synced_at")
   sheetSyncWarning String?       @map("sheet_sync_warning") @db.Text
   notes           String?        @db.Text
+  isImportant     Boolean        @default(false) @map("is_important")
+  locationSent    Boolean        @default(false) @map("location_sent")
 
   sessions   CallSession[]
   activities CallActivity[]
@@ -330,25 +345,34 @@ model CallLead {
 
   @@index([status])
   @@index([assignedToId])
+  @@index([assignedToId, status])
+  @@index([assignedToId, sheetSyncedAt])
+  @@index([status, updatedAt])
   @@index([nextFollowUpAt])
   @@index([instagramLeadId])
+  @@index([isImportant])
+  @@index([locationSent])
 }
 
 model CallEvent {
   id             String        @id @default(cuid())
   eventId        String        @unique @map("event_id")
+  localSessionId String?       @map("local_session_id")
   companyPhoneId String        @map("company_phone_id")
   companyPhone   CompanyPhone  @relation(fields: [companyPhoneId], references: [id], onDelete: Cascade)
   sessionId      String?       @map("session_id")
   session        CallSession?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
   callerNumber   String        @map("caller_number")
   eventType      CallEventType @map("event_type")
+  callDirection  CallDirection @default(INCOMING) @map("call_direction")
   occurredAt     DateTime      @map("occurred_at")
   receivedAt     DateTime      @default(now()) @map("received_at")
+  durationSeconds Int?         @map("duration_seconds")
   rawPayload     Json          @map("raw_payload")
 
   @@index([companyPhoneId])
   @@index([sessionId])
+  @@index([localSessionId])
   @@index([callerNumber])
   @@index([eventType])
   @@index([occurredAt])
@@ -356,16 +380,20 @@ model CallEvent {
 
 model CallSession {
   id             String            @id @default(cuid())
+  localSessionId String?           @map("local_session_id")
   companyPhoneId String            @map("company_phone_id")
   companyPhone   CompanyPhone      @relation(fields: [companyPhoneId], references: [id], onDelete: Cascade)
   callerNumber   String            @map("caller_number")
   leadId         String            @map("lead_id")
   lead           CallLead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
   status         CallSessionStatus @default(RINGING)
+  callDirection  CallDirection     @default(INCOMING) @map("call_direction")
   firstRingAt    DateTime          @map("first_ring_at")
   answeredAt     DateTime?         @map("answered_at")
   endedAt        DateTime?         @map("ended_at")
   durationSeconds Int?             @map("duration_seconds")
+  androidCallLogId String?         @map("android_call_log_id")
+  simSlot        Int?              @map("sim_slot")
   assignedToId   String?           @map("assigned_to_id")
   assignedTo     User?             @relation("CallSessions", fields: [assignedToId], references: [id], onDelete: SetNull)
 
@@ -376,10 +404,15 @@ model CallSession {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([companyPhoneId])
+  @@index([localSessionId])
   @@index([callerNumber])
   @@index([leadId])
   @@index([status])
+  @@index([status, endedAt])
+  @@index([status, firstRingAt])
+  @@index([callDirection, firstRingAt])
   @@index([assignedToId])
+  @@index([assignedToId, firstRingAt])
   @@index([firstRingAt])
 }
 
@@ -398,8 +431,11 @@ model CallActivity {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([leadId])
+  @@index([leadId, createdAt])
   @@index([sessionId])
   @@index([userId])
+  @@index([userId, createdAt])
+  @@index([userId, actionType, createdAt])
   @@index([actionType])
 }
 
@@ -418,6 +454,7 @@ model CallFollowUp {
 
   @@index([leadId])
   @@index([assignedToId])
+  @@index([assignedToId, completedAt])
   @@index([dueAt])
   @@index([completedAt])
 }

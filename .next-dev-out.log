@@ -1,0 +1,11 @@
+
+> crm@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.56.1:3000
+- Environments: .env
+✓ Ready in 1007ms
+Creating turbopack project { dir: 'C:\\projects-2025\\Automation-final\\crm', testMode: true }
+

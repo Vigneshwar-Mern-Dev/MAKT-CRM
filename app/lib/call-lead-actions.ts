@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "./db";
-import { requireUser } from "./session";
-import type { CallLeadStatus, LeadStage } from "@prisma/client";
+import { requireRole, requireUser } from "./session";
+import type { CallLeadStatus } from "@prisma/client";
 import { LeadSource } from "./prisma-enums";
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -14,9 +14,22 @@ function normalizeDigits(value: string | null | undefined) {
   return value ? value.replace(/\D/g, "") : "";
 }
 
-function buildInstagramAtmId(phone: string) {
-  const digits = normalizeDigits(phone);
-  return digits ? `IG-${digits}` : `IG-CALL-${Date.now()}`;
+function normalizePhone(value: string) {
+  let digits = normalizeDigits(value);
+
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return `+${digits}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith("0")) {
+    digits = digits.slice(1);
+  }
+
+  if (digits.length === 10) {
+    return `+91${digits}`;
+  }
+
+  return digits.length >= 8 ? `+${digits}` : null;
 }
 
 function parseFollowUp(value: string | undefined) {
@@ -28,29 +41,63 @@ function parseFollowUp(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-async function syncInstagramLeadBackToSheet(lead: {
-  atmId: string | null;
+function hasSheetReadyCallLeadDetails(lead: {
+  displayName: string;
+  email: string | null;
+  city: string | null;
+  address: string | null;
+  ownershipType: string | null;
+  language: string | null;
+  message: string | null;
+  notes: string | null;
+  nextFollowUpAt: Date | null;
+  locationSent: boolean;
+  status: string;
+}) {
+  const nameLooksReal = lead.displayName.trim() && !/^caller\s+\d+$/i.test(lead.displayName.trim());
+  const hasCustomerData = [
+    lead.email,
+    lead.city,
+    lead.address,
+    lead.ownershipType,
+    lead.language,
+    lead.message,
+    lead.notes,
+  ].some((value) => Boolean(value?.trim()));
+  const hasNextStep = Boolean(lead.nextFollowUpAt);
+  const hasFinalOutcome = ["NOT_INTERESTED", "CONVERTED", "CLOSED"].includes(lead.status);
+
+  return Boolean(nameLooksReal && (hasCustomerData || lead.locationSent || hasNextStep || hasFinalOutcome));
+}
+
+async function syncCallLeadBackToSheet(lead: {
+  id: string;
   name: string;
+  email: string | null;
   phone: string | null;
   city: string | null;
   language: string | null;
   address: string | null;
   ownershipType: string | null;
+  locationSent: boolean;
   stage: string;
+  assignedAgent: string | null;
+  requirement: string | null;
   notes: string | null;
   nextFollowUpAt: Date | null;
   lastContactedAt: Date | null;
+  incomingCallCount: number;
+  outgoingCallCount: number;
+  lastCallDirection: string | null;
+  lastCallDurationSeconds: number | null;
+  updatedAt: Date;
 }) {
-  if (!lead.atmId) {
-    return "Instagram sheet sync skipped because the lead has no ATM-ID.";
-  }
-
   const integration = await db.leadIntegration.findUnique({
     where: { source: LeadSource.INSTAGRAM },
   });
 
   if (!integration?.appScriptUrl || !integration.spreadsheetId || !integration.sheetName) {
-    return "Instagram lead saved in CRM, but Instagram sheet sync is not configured.";
+    return "Call lead saved in CRM, but Call Leads sheet sync is not configured.";
   }
 
   try {
@@ -68,27 +115,36 @@ async function syncInstagramLeadBackToSheet(lead: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        action: "updateInstagramLead",
+        action: "updateCallLead",
         sheetId: integration.spreadsheetId,
         sheetName: integration.sheetName,
         lead: {
-          atmId: lead.atmId,
+          id: lead.id,
           name: lead.name,
+          email: lead.email,
           phone: lead.phone,
           city: lead.city,
           language: lead.language,
           address: lead.address,
           ownershipType: lead.ownershipType,
+          locationSent: lead.locationSent,
           stage: lead.stage,
+          assignedAgent: lead.assignedAgent,
+          requirement: lead.requirement,
           notes: lead.notes,
           nextFollowUpAt: lead.nextFollowUpAt?.toISOString() ?? null,
           lastContactedAt: lead.lastContactedAt?.toISOString() ?? null,
+          incomingCallCount: lead.incomingCallCount,
+          outgoingCallCount: lead.outgoingCallCount,
+          lastCallDirection: lead.lastCallDirection,
+          lastCallDurationSeconds: lead.lastCallDurationSeconds,
+          updatedAt: lead.updatedAt.toISOString(),
         },
       }),
     });
 
     if (!response.ok) {
-      return `Instagram lead saved in CRM, but Apps Script returned HTTP ${response.status}.`;
+      return `Call lead saved in CRM, but Apps Script returned HTTP ${response.status}.`;
     }
 
     const payload = (await response.json().catch(() => ({}))) as {
@@ -98,16 +154,16 @@ async function syncInstagramLeadBackToSheet(lead: {
     };
 
     if (payload.ok === false) {
-      return `Instagram lead saved in CRM, but sheet update failed: ${payload.error || "Apps Script error"}.`;
+      return `Call lead saved in CRM, but sheet update failed: ${payload.error || "Apps Script error"}.`;
     }
 
     if (payload.updated !== true) {
-      return "Instagram lead saved in CRM, but sheet update was not confirmed.";
+      return "Call lead saved in CRM, but sheet update was not confirmed.";
     }
 
     return null;
   } catch (error) {
-    return `Instagram lead saved in CRM, but sheet sync failed: ${getErrorMessage(error, "Unknown Apps Script error")}.`;
+    return `Call lead saved in CRM, but sheet sync failed: ${getErrorMessage(error, "Unknown Apps Script error")}.`;
   }
 }
 
@@ -117,6 +173,256 @@ function revalidateCallViews() {
   revalidatePath("/admin/calls/missed");
   revalidatePath("/admin/calls/live");
   revalidatePath("/admin/leads");
+}
+
+export async function adminDeleteCallLeadsAction(leadIds: string[]) {
+  try {
+    await requireRole("ADMIN");
+
+    if (!leadIds.length) {
+      return { error: "No call leads selected." };
+    }
+
+    await db.callLead.deleteMany({
+      where: { id: { in: leadIds } },
+    });
+
+    revalidateCallViews();
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting call leads:", error);
+    return { error: getErrorMessage(error, "Deleting call leads failed.") };
+  }
+}
+
+export async function adminDeleteCallSessionAction(sessionId: string) {
+  try {
+    await requireRole("ADMIN");
+
+    if (!sessionId) {
+      return { error: "Call session is required." };
+    }
+
+    await db.callSession.delete({
+      where: { id: sessionId },
+    });
+
+    revalidateCallViews();
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting call session:", error);
+    return { error: getErrorMessage(error, "Deleting call session failed.") };
+  }
+}
+
+export async function adminDeleteMissedCallbacksForLeadAction(sessionId: string) {
+  try {
+    await requireRole("ADMIN");
+
+    if (!sessionId) {
+      return { error: "Call session is required." };
+    }
+
+    const session = await db.callSession.findUnique({
+      where: { id: sessionId },
+      select: { leadId: true },
+    });
+
+    if (!session) {
+      return { error: "Call session not found." };
+    }
+
+    const result = await db.callSession.deleteMany({
+      where: {
+        leadId: session.leadId,
+        status: "MISSED",
+      },
+    });
+
+    revalidateCallViews();
+    return { success: true, deletedCount: result.count };
+  } catch (error) {
+    console.error("Error deleting missed callbacks:", error);
+    return { error: getErrorMessage(error, "Deleting missed callbacks failed.") };
+  }
+}
+
+export async function adminAssignCallLeadAction(leadId: string, assignedToId: string | null) {
+  try {
+    const admin = await requireRole("ADMIN");
+    let assigneeName = "Unassigned";
+
+    if (assignedToId) {
+      const assignee = await db.user.findUnique({
+        where: { id: assignedToId },
+        select: { username: true },
+      });
+
+      if (!assignee) {
+        return { error: "Assigned user not found." };
+      }
+
+      assigneeName = assignee.username;
+    }
+
+    await db.callLead.update({
+      where: { id: leadId },
+      data: { assignedToId },
+    });
+
+    await db.callActivity.create({
+      data: {
+        leadId,
+        userId: admin.id,
+        actionType: "ASSIGNMENT_CHANGE",
+        description: assignedToId ? `Call lead assigned to ${assigneeName}` : "Call lead unassigned",
+      },
+    });
+
+    revalidateCallViews();
+    return { success: true };
+  } catch (error) {
+    console.error("Error assigning call lead:", error);
+    return { error: getErrorMessage(error, "Assigning call lead failed.") };
+  }
+}
+
+export async function updateCallLeadStatusAction(leadId: string, status: CallLeadStatus) {
+  try {
+    const user = await requireUser();
+    const lead = await db.callLead.findUnique({
+      where: { id: leadId },
+      select: { assignedToId: true, status: true },
+    });
+
+    if (!lead) {
+      return { error: "Call lead not found." };
+    }
+
+    if (user.role !== "ADMIN" && lead.assignedToId !== user.id) {
+      return { error: "Only admins or the assigned agent can update this call status." };
+    }
+
+    await db.callLead.update({
+      where: { id: leadId },
+      data: {
+        status,
+        lastContactedAt: new Date(),
+      },
+    });
+
+    await db.callActivity.create({
+      data: {
+        leadId,
+        userId: user.id,
+        actionType: "FOLLOW_UP_UPDATE",
+        description: `Call lead status changed from ${lead.status} to ${status}`,
+      },
+    });
+
+    revalidateCallViews();
+    return { success: true };
+  } catch (error) {
+    console.error("Error updating call lead status:", error);
+    return { error: getErrorMessage(error, "Updating call lead status failed.") };
+  }
+}
+
+export async function toggleCallLeadImportantAction(leadId: string, isImportant: boolean) {
+  try {
+    const user = await requireUser();
+
+    await db.callLead.update({
+      where: { id: leadId },
+      data: { isImportant },
+    });
+
+    await db.callActivity.create({
+      data: {
+        leadId,
+        userId: user.id,
+        actionType: "FOLLOW_UP_UPDATE",
+        description: isImportant ? "Call lead marked important" : "Call lead unmarked important",
+      },
+    });
+
+    revalidateCallViews();
+    return { success: true };
+  } catch (error) {
+    console.error("Error updating call lead importance:", error);
+    return { error: getErrorMessage(error, "Updating call lead importance failed.") };
+  }
+}
+
+export async function createManualCallLeadAction(data: {
+  displayName: string;
+  phone: string;
+  email?: string;
+  city?: string;
+  language?: string;
+  address?: string;
+  ownershipType?: string;
+  locationSent?: boolean;
+  message?: string;
+  notes?: string;
+}) {
+  try {
+    const user = await requireUser();
+    const phone = normalizePhone(data.phone);
+
+    if (!phone) {
+      return { error: "Enter a valid phone number." };
+    }
+
+    const displayName = data.displayName.trim() || `Caller ${phone.slice(-4)}`;
+    const existingLead = await db.callLead.findUnique({
+      where: { phone },
+      select: { id: true },
+    });
+
+    const lead = await db.callLead.upsert({
+      where: { phone },
+      update: {
+        displayName,
+        email: data.email?.trim() || null,
+        city: data.city?.trim() || null,
+        language: data.language?.trim() || null,
+        address: data.address?.trim() || null,
+        ownershipType: data.ownershipType?.trim() || null,
+        locationSent: Boolean(data.locationSent),
+        message: data.message?.trim() || null,
+        notes: data.notes?.trim() || null,
+        lastContactedAt: new Date(),
+      },
+      create: {
+        phone,
+        displayName,
+        email: data.email?.trim() || null,
+        city: data.city?.trim() || null,
+        language: data.language?.trim() || null,
+        address: data.address?.trim() || null,
+        ownershipType: data.ownershipType?.trim() || null,
+        locationSent: Boolean(data.locationSent),
+        message: data.message?.trim() || null,
+        notes: data.notes?.trim() || null,
+      },
+    });
+
+    await db.callActivity.create({
+      data: {
+        leadId: lead.id,
+        userId: user.id,
+        actionType: "NOTE_ADDED",
+        description: existingLead ? "Manual call lead details updated" : "Manual call lead created",
+      },
+    });
+
+    revalidateCallViews();
+    return { success: true, leadId: lead.id, updated: Boolean(existingLead) };
+  } catch (error) {
+    console.error("Error creating manual call lead:", error);
+    return { error: getErrorMessage(error, "Manual call lead save failed.") };
+  }
 }
 
 export async function updateCallLeadDetailsAction(
@@ -129,7 +435,7 @@ export async function updateCallLeadDetailsAction(
     language?: string;
     address?: string;
     ownershipType?: string;
-    provider?: string;
+    locationSent?: boolean;
     message?: string;
   },
 ) {
@@ -153,7 +459,7 @@ export async function updateCallLeadDetailsAction(
         language: data.language?.trim() || null,
         address: data.address?.trim() || null,
         ownershipType: data.ownershipType?.trim() || null,
-        provider: data.provider?.trim() || null,
+        locationSent: Boolean(data.locationSent),
         message: data.message?.trim() || null,
         lastContactedAt: new Date(),
       },
@@ -188,18 +494,23 @@ export async function updateCallLeadWorkflowAction(
     const user = await requireUser();
     const nextFollowUpAt = parseFollowUp(data.nextFollowUpAt);
     const notes = data.notes?.trim() || null;
-    const assignedToId = data.assignedToId?.trim() || undefined;
+    const assignedToId = data.assignedToId?.trim() || null;
 
     if (assignedToId) {
       const assignee = await db.user.findUnique({
         where: { id: assignedToId },
-        select: { id: true },
+        select: { id: true, username: true },
       });
 
       if (!assignee) {
         return { error: "Assigned user not found." };
       }
     }
+
+    const currentLead = await db.callLead.findUnique({
+      where: { id: leadId },
+      select: { assignedToId: true },
+    });
 
     await db.callLead.update({
       where: { id: leadId },
@@ -223,6 +534,17 @@ export async function updateCallLeadWorkflowAction(
       });
     }
 
+    if (assignedToId && currentLead?.assignedToId !== assignedToId) {
+      await db.callActivity.create({
+        data: {
+          leadId,
+          userId: user.id,
+          actionType: "ASSIGNMENT_CHANGE",
+          description: "Call lead claimed by user",
+        },
+      });
+    }
+
     await db.callActivity.create({
       data: {
         leadId,
@@ -242,75 +564,80 @@ export async function updateCallLeadWorkflowAction(
   }
 }
 
-export async function saveCallLeadToInstagramAction(leadId: string) {
+export async function saveCallLeadToSheetAction(leadId: string) {
   try {
     const user = await requireUser();
     const callLead = await db.callLead.findUnique({
       where: { id: leadId },
+      include: {
+        assignedTo: { select: { username: true } },
+        sessions: {
+          where: { durationSeconds: { not: null } },
+          orderBy: { firstRingAt: "desc" },
+          take: 1,
+        },
+      },
     });
 
     if (!callLead) {
       return { error: "Call lead not found." };
     }
 
-    const atmId = buildInstagramAtmId(callLead.phone);
-    const instagramLead = await db.instagramLead.upsert({
-      where: { atmId },
-      update: {
-        name: callLead.displayName,
-        email: callLead.email,
-        phone: callLead.phone,
-        city: callLead.city,
-        address: callLead.address,
-        ownershipType: callLead.ownershipType,
-        provider: callLead.provider || "Call Tracker",
-        language: callLead.language,
-        message: callLead.message || "Created from MAKT Call Tracker",
-        sheetSource: "CALL_TRACKER",
-        stage: callLead.status as LeadStage,
-        assignedToId: callLead.assignedToId,
-        lastContactedAt: callLead.lastContactedAt || new Date(),
-        nextFollowUpAt: callLead.nextFollowUpAt,
-        notes: callLead.notes,
-      },
-      create: {
-        atmId,
-        name: callLead.displayName,
-        email: callLead.email,
-        phone: callLead.phone,
-        city: callLead.city,
-        address: callLead.address,
-        ownershipType: callLead.ownershipType,
-        provider: callLead.provider || "Call Tracker",
-        language: callLead.language,
-        message: callLead.message || "Created from MAKT Call Tracker",
-        sheetSource: "CALL_TRACKER",
-        stage: callLead.status as LeadStage,
-        assignedToId: callLead.assignedToId,
-        lastContactedAt: callLead.lastContactedAt || new Date(),
-        nextFollowUpAt: callLead.nextFollowUpAt,
-        notes: callLead.notes,
-      },
-    });
+    if (!hasSheetReadyCallLeadDetails(callLead)) {
+      const warning = "Saved in CRM only. Add real customer details before sending this lead to the sheet.";
 
-    const warning = await syncInstagramLeadBackToSheet({
-      atmId: instagramLead.atmId,
-      name: instagramLead.name,
-      phone: instagramLead.phone,
-      city: instagramLead.city,
-      language: instagramLead.language,
-      address: instagramLead.address,
-      ownershipType: instagramLead.ownershipType,
-      stage: instagramLead.stage,
-      notes: instagramLead.notes,
-      nextFollowUpAt: instagramLead.nextFollowUpAt,
-      lastContactedAt: instagramLead.lastContactedAt,
+      await db.callLead.update({
+        where: { id: callLead.id },
+        data: {
+          sheetSyncWarning: warning,
+        },
+      });
+
+      await db.callActivity.create({
+        data: {
+          leadId: callLead.id,
+          userId: user.id,
+          actionType: "NOTE_ADDED",
+          description: warning,
+        },
+      });
+
+      revalidateCallViews();
+      return { success: true, warning };
+    }
+
+    const [incomingCount, outgoingCount] = await Promise.all([
+      db.callSession.count({ where: { leadId: callLead.id, callDirection: "INCOMING" } }),
+      db.callSession.count({ where: { leadId: callLead.id, callDirection: "OUTGOING" } }),
+    ]);
+    const latestDurationSession = callLead.sessions[0] || null;
+
+    const warning = await syncCallLeadBackToSheet({
+      id: callLead.id,
+      name: callLead.displayName,
+      email: callLead.email,
+      phone: callLead.phone,
+      city: callLead.city,
+      language: callLead.language,
+      address: callLead.address,
+      ownershipType: callLead.ownershipType,
+      locationSent: callLead.locationSent,
+      stage: callLead.status,
+      assignedAgent: callLead.assignedTo?.username || null,
+      requirement: callLead.message,
+      notes: callLead.notes,
+      nextFollowUpAt: callLead.nextFollowUpAt,
+      lastContactedAt: callLead.lastContactedAt,
+      incomingCallCount: incomingCount,
+      outgoingCallCount: outgoingCount,
+      lastCallDirection: latestDurationSession?.callDirection || null,
+      lastCallDurationSeconds: latestDurationSession?.durationSeconds || null,
+      updatedAt: callLead.updatedAt,
     });
 
     await db.callLead.update({
       where: { id: callLead.id },
       data: {
-        instagramLeadId: instagramLead.id,
         sheetSyncedAt: warning ? null : new Date(),
         sheetSyncWarning: warning,
       },
@@ -322,17 +649,15 @@ export async function saveCallLeadToInstagramAction(leadId: string) {
         userId: user.id,
         actionType: "NOTE_ADDED",
         description: warning
-          ? `Call lead saved to Instagram CRM lead with sheet warning: ${warning}`
-          : "Call lead saved to Instagram CRM lead and synced to sheet",
+          ? `Call lead sheet sync warning: ${warning}`
+          : "Call lead synced to Call Leads sheet",
       },
     });
 
     revalidateCallViews();
-    revalidatePath("/admin/leads");
-    revalidatePath("/admin/leads/instagram");
     return { success: true, warning };
   } catch (error) {
-    console.error("Error saving call lead to Instagram:", error);
-    return { error: getErrorMessage(error, "Saving call lead to Instagram failed.") };
+    console.error("Error saving call lead to sheet:", error);
+    return { error: getErrorMessage(error, "Saving call lead to sheet failed.") };
   }
 }

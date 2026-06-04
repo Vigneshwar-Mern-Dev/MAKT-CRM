@@ -37,6 +37,7 @@ function formatTime(value: string) {
 export function IncomingCallPopup() {
   const [calls, setCalls] = useState<LiveCall[]>([]);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set());
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let isMounted = true;
@@ -63,10 +64,12 @@ export function IncomingCallPopup() {
 
     loadLiveCalls();
     const intervalId = window.setInterval(loadLiveCalls, 4000);
+    const clockId = window.setInterval(() => setNow(Date.now()), 1000);
 
     return () => {
       isMounted = false;
       window.clearInterval(intervalId);
+      window.clearInterval(clockId);
     };
   }, []);
 
@@ -80,6 +83,15 @@ export function IncomingCallPopup() {
   }
 
   const isRinging = visibleCall.status === "RINGING";
+  const ringAgeSeconds = Math.max(
+    0,
+    Math.floor((now - new Date(visibleCall.firstRingAt).getTime()) / 1000),
+  );
+  const ringSecondsLeft = Math.max(0, 30 - ringAgeSeconds);
+
+  if (isRinging && ringAgeSeconds >= 30) {
+    return null;
+  }
 
   return (
     <div className="fixed bottom-5 right-5 z-[60] w-[min(calc(100vw-2.5rem),380px)] rounded-lg border border-cyan-300/30 bg-[#0d1118] p-4 shadow-2xl shadow-cyan-950/40">
@@ -123,16 +135,18 @@ export function IncomingCallPopup() {
         <div>
           <p className="text-slate-500">Started</p>
           <p className="mt-1 font-semibold text-slate-200">{formatTime(visibleCall.firstRingAt)}</p>
-          <p className="mt-1 text-slate-500">{visibleCall.status === "RINGING" ? "Ringing" : "On call"}</p>
+          <p className="mt-1 text-slate-500">
+            {isRinging ? `${ringSecondsLeft}s before callback queue` : "On call"}
+          </p>
         </div>
       </div>
 
       <div className="mt-4 flex gap-2">
         <Link
           className="h-10 flex-1 rounded-lg bg-cyan-300 text-center text-sm font-bold leading-10 text-slate-950 transition hover:bg-cyan-200"
-          href="/admin/calls/live"
+          href="/admin/calls/missed"
         >
-          View Live
+          Open Callbacks
         </Link>
         <Link
           className="h-10 flex-1 rounded-lg border border-white/10 text-center text-sm font-bold leading-10 text-slate-200 transition hover:bg-white/10"

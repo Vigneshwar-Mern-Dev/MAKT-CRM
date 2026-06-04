@@ -1,48 +1,53 @@
 import { db } from "@/app/lib/db";
-import { CallStatusBadge, EmptyState, PageHeader, formatDateTime } from "../call-ui";
+import { expireStaleRingingCalls } from "@/app/lib/call-session-maintenance";
+import { CallbacksPage } from "./callbacks-page";
 
 export default async function AdminMissedCallsPage() {
-  const calls = await db.callSession.findMany({
-    where: { status: "MISSED" },
-    include: {
-      companyPhone: { select: { label: true, phoneNumber: true } },
-      lead: { select: { displayName: true, phone: true, status: true, nextFollowUpAt: true } },
-      assignedTo: { select: { username: true } },
-    },
-    orderBy: { firstRingAt: "desc" },
-    take: 100,
-  });
+  await expireStaleRingingCalls();
 
-  return (
-    <div className="space-y-6 pb-8">
-      <PageHeader
-        description="Calls that ended without being answered. These should be treated as callback tasks."
-        title="Missed Calls"
-      />
+  const terminalLeadStatuses = ["CONVERTED", "CLOSED", "NOT_INTERESTED"] as const;
+  const leadSelect = {
+    id: true,
+    displayName: true,
+    phone: true,
+    email: true,
+    city: true,
+    address: true,
+    ownershipType: true,
+    language: true,
+    message: true,
+    status: true,
+    assignedToId: true,
+    nextFollowUpAt: true,
+    notes: true,
+  };
+  const [activeCalls, calls, agents] = await Promise.all([
+    db.callSession.findMany({
+      where: { status: { in: ["RINGING", "ANSWERED"] }, endedAt: null },
+      include: {
+        companyPhone: { select: { label: true, phoneNumber: true } },
+        lead: { select: leadSelect },
+        assignedTo: { select: { username: true } },
+      },
+      orderBy: { firstRingAt: "desc" },
+      take: 25,
+    }),
+    db.callSession.findMany({
+      where: { status: "MISSED", lead: { status: { notIn: [...terminalLeadStatuses] } } },
+      include: {
+        companyPhone: { select: { label: true, phoneNumber: true } },
+        lead: { select: leadSelect },
+        assignedTo: { select: { username: true } },
+      },
+      orderBy: { firstRingAt: "asc" },
+      take: 100,
+    }),
+    db.user.findMany({
+      where: { role: "USER" },
+      select: { id: true, username: true, email: true, department: true },
+      orderBy: { username: "asc" },
+    }),
+  ]);
 
-      <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-        <div className="divide-y divide-white/10">
-          {calls.map((call) => (
-            <div className="grid gap-4 py-4 text-sm xl:grid-cols-[1fr_1fr_auto_1fr]" key={call.id}>
-              <div>
-                <p className="font-semibold text-white">{call.lead.displayName}</p>
-                <p className="mt-1 text-slate-400">{call.lead.phone}</p>
-              </div>
-              <div>
-                <p className="font-semibold text-white">{call.companyPhone.label}</p>
-                <p className="mt-1 text-slate-400">{call.companyPhone.phoneNumber}</p>
-              </div>
-              <CallStatusBadge status={call.status} />
-              <div className="text-slate-500 xl:text-right">
-                <p>Missed {formatDateTime(call.firstRingAt)}</p>
-                <p className="mt-1">Assigned: {call.assignedTo?.username || "Unassigned"}</p>
-                <p className="mt-1">Follow-up: {formatDateTime(call.lead.nextFollowUpAt)}</p>
-              </div>
-            </div>
-          ))}
-          {!calls.length ? <EmptyState>No missed calls in queue.</EmptyState> : null}
-        </div>
-      </div>
-    </div>
-  );
+  return <CallbacksPage activeCalls={activeCalls} agents={agents} calls={calls} />;
 }

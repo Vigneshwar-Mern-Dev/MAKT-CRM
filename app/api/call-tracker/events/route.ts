@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { CallEventType, Prisma } from "@prisma/client";
+import type { CallDirection, CallEventType, Prisma } from "@prisma/client";
 import {
   authenticateCompanyPhone,
   ingestCallEvent,
 } from "@/app/lib/call-tracker";
 
 const callEventTypes = new Set(["RINGING", "ANSWERED", "ENDED", "MISSED"]);
+const callDirections = new Set(["INCOMING", "OUTGOING", "UNKNOWN"]);
 
 function getBearerToken(request: NextRequest) {
   const authorization = request.headers.get("authorization");
@@ -27,6 +28,19 @@ function parseOccurredAt(value: unknown) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function parseOptionalNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
@@ -45,7 +59,20 @@ export async function POST(request: NextRequest) {
     const companyPhone = typeof body.companyPhone === "string" ? body.companyPhone.trim() : "";
     const caller = typeof body.caller === "string" ? body.caller.trim() : "";
     const eventType = typeof body.eventType === "string" ? body.eventType.trim() : "";
+    const callDirection =
+      typeof body.callDirection === "string" && callDirections.has(body.callDirection.trim())
+        ? body.callDirection.trim()
+        : "INCOMING";
     const occurredAt = parseOccurredAt(body.occurredAt);
+    const callSessionLocalId =
+      typeof body.callSessionLocalId === "string" ? body.callSessionLocalId.trim() : "";
+    const androidCallLogId =
+      typeof body.androidCallLogId === "string" ? body.androidCallLogId.trim() : "";
+    const appVersion = typeof body.appVersion === "string" ? body.appVersion.trim() : "";
+    const androidVersion =
+      typeof body.androidVersion === "string" ? body.androidVersion.trim() : "";
+    const deviceModel = typeof body.deviceModel === "string" ? body.deviceModel.trim() : "";
+    const networkType = typeof body.networkType === "string" ? body.networkType.trim() : "";
 
     if (
       !eventId ||
@@ -71,11 +98,26 @@ export async function POST(request: NextRequest) {
 
     const result = await ingestCallEvent({
       eventId,
+      callSessionLocalId: callSessionLocalId || undefined,
       deviceId,
       companyPhone,
       caller: caller || undefined,
       eventType: eventType as CallEventType,
+      callDirection: callDirection as CallDirection,
       occurredAt,
+      durationSeconds: parseOptionalNumber(body.durationSeconds),
+      androidCallLogId: androidCallLogId || undefined,
+      simSlot: parseOptionalNumber(body.simSlot),
+      appVersion: appVersion || undefined,
+      androidVersion: androidVersion || undefined,
+      deviceModel: deviceModel || undefined,
+      batteryPercent: parseOptionalNumber(body.batteryPercent),
+      networkType: networkType || undefined,
+      pendingSyncCount: parseOptionalNumber(body.pendingSyncCount),
+      permissionStatus:
+        body.permissionStatus && typeof body.permissionStatus === "object"
+          ? (body.permissionStatus as Prisma.InputJsonValue)
+          : undefined,
       rawPayload: body as Prisma.InputJsonValue,
     });
 

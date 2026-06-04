@@ -1,9 +1,19 @@
 import { db } from "@/app/lib/db";
 import { CallLeadsPage, type CallLeadRow } from "./call-leads-page";
 
-export default async function AdminCallLeadsPage() {
+type AdminCallLeadsPageProps = {
+  searchParams: Promise<{
+    agent?: string;
+  }>;
+};
+
+export default async function AdminCallLeadsPage({ searchParams }: AdminCallLeadsPageProps) {
+  const params = await searchParams;
   const [leads, agents] = await Promise.all([
     db.callLead.findMany({
+    where: {
+      phone: { not: { startsWith: "UNKNOWN-" } },
+    },
     include: {
       assignedTo: { select: { id: true, username: true, email: true, department: true } },
       sessions: {
@@ -13,7 +23,7 @@ export default async function AdminCallLeadsPage() {
           },
         },
         orderBy: { firstRingAt: "desc" },
-        take: 1,
+        take: 50,
       },
       activities: {
         include: {
@@ -33,6 +43,72 @@ export default async function AdminCallLeadsPage() {
       orderBy: { username: "asc" },
     }),
   ]);
+  const leadIds = leads.map((lead) => lead.id);
+  const [incomingCounts, outgoingCounts, outgoingSessions, durationSessions] = leadIds.length
+    ? await Promise.all([
+        db.callSession.groupBy({
+          by: ["leadId"],
+          where: {
+            leadId: { in: leadIds },
+            callDirection: "INCOMING",
+          },
+          _count: { _all: true },
+        }),
+        db.callSession.groupBy({
+          by: ["leadId"],
+          where: {
+            leadId: { in: leadIds },
+            callDirection: "OUTGOING",
+          },
+          _count: { _all: true },
+        }),
+        db.callSession.findMany({
+          where: {
+            leadId: { in: leadIds },
+            callDirection: "OUTGOING",
+          },
+          include: {
+            companyPhone: {
+              select: { label: true, phoneNumber: true },
+            },
+          },
+          orderBy: { firstRingAt: "desc" },
+        }),
+        db.callSession.findMany({
+          where: {
+            leadId: { in: leadIds },
+            durationSeconds: { not: null },
+          },
+          include: {
+            companyPhone: {
+              select: { label: true, phoneNumber: true },
+            },
+          },
+          orderBy: { firstRingAt: "desc" },
+        }),
+      ])
+    : [[], [], [], []];
+  const incomingCountByLeadId = new Map(
+    incomingCounts.map((count) => [count.leadId, count._count._all]),
+  );
+  const outgoingCountByLeadId = new Map(
+    outgoingCounts.map((count) => [count.leadId, count._count._all]),
+  );
+  const latestOutgoingSessionByLeadId = new Map<string, (typeof outgoingSessions)[number]>();
+  const latestDurationSessionByLeadId = new Map<string, (typeof durationSessions)[number]>();
+
+  for (const session of outgoingSessions) {
+    if (!latestOutgoingSessionByLeadId.has(session.leadId)) {
+      latestOutgoingSessionByLeadId.set(session.leadId, session);
+    }
+  }
+
+  for (const session of durationSessions) {
+    if (!latestDurationSessionByLeadId.has(session.leadId)) {
+      latestDurationSessionByLeadId.set(session.leadId, session);
+    }
+  }
+
   const rows: CallLeadRow[] = leads.map((lead) => ({
     id: lead.id,
     phone: lead.phone,
@@ -41,7 +117,6 @@ export default async function AdminCallLeadsPage() {
     city: lead.city,
     address: lead.address,
     ownershipType: lead.ownershipType,
-    provider: lead.provider,
     language: lead.language,
     message: lead.message,
     status: lead.status,
@@ -50,15 +125,21 @@ export default async function AdminCallLeadsPage() {
     lastContactedAt: lead.lastContactedAt,
     nextFollowUpAt: lead.nextFollowUpAt,
     notes: lead.notes,
+    isImportant: lead.isImportant,
+    locationSent: lead.locationSent,
     instagramLeadId: lead.instagramLeadId,
     sheetSyncedAt: lead.sheetSyncedAt,
     sheetSyncWarning: lead.sheetSyncWarning,
     updatedAt: lead.updatedAt,
     assignedTo: lead.assignedTo,
     sessions: lead.sessions,
+    incomingCallCount: incomingCountByLeadId.get(lead.id) || 0,
+    latestOutgoingSession: latestOutgoingSessionByLeadId.get(lead.id) || null,
+    latestDurationSession: latestDurationSessionByLeadId.get(lead.id) || null,
+    outgoingCallCount: outgoingCountByLeadId.get(lead.id) || 0,
     activities: lead.activities,
     _count: lead._count,
   }));
 
-  return <CallLeadsPage agents={agents} leads={rows} />;
+  return <CallLeadsPage agents={agents} initialAgentId={params.agent || "ALL"} leads={rows} />;
 }

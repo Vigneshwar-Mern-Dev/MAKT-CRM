@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { logoutAction } from "@/app/lib/auth-actions";
+import { CallCenterLiveSync } from "../../components/call-center-live-sync";
 import { IncomingCallPopup } from "./incoming-call-popup";
 
 type AdminShellProps = {
@@ -92,9 +93,8 @@ const navItems: NavItem[] = [
     ),
     children: [
       { href: "/admin/calls", label: "Overview" },
-      { href: "/admin/calls/live", label: "Live Calls" },
-      { href: "/admin/calls/missed", label: "Missed Calls" },
       { href: "/admin/calls/leads", label: "Call Leads" },
+      { href: "/admin/calls/missed", label: "Callbacks" },
       { href: "/admin/calls/phones", label: "Company Phones" },
     ],
   },
@@ -300,6 +300,7 @@ export function AdminShell({ children, user }: AdminShellProps) {
           <div className="flex-1 overflow-y-auto px-5 py-6 md:px-8 md:py-8">{children}</div>
         </div>
       </div>
+      {pathname.startsWith("/admin/calls") ? <CallCenterLiveSync /> : null}
       <IncomingCallPopup />
     </main>
   );
