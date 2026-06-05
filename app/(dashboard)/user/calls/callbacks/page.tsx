@@ -23,6 +23,9 @@ export default async function UserCallbacksPage() {
     assignedToId: true,
     nextFollowUpAt: true,
     notes: true,
+    createdAt: true,
+    localContactName: true,
+    _count: { select: { sessions: true } },
   };
 
   const [activeCalls, openLeads, calls] = await Promise.all([

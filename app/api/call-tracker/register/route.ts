@@ -8,6 +8,18 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function apiError(error: string, status: number, retryable: boolean) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error,
+      retryable,
+      serverTime: new Date().toISOString(),
+    },
+    { status },
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => ({}))) as {
@@ -18,14 +30,11 @@ export async function POST(request: NextRequest) {
     };
 
     if (!validateRegistrationSecret(body.registrationSecret)) {
-      return NextResponse.json({ error: "Unauthorized registration secret." }, { status: 401 });
+      return apiError("Unauthorized registration secret.", 401, false);
     }
 
     if (typeof body.companyPhone !== "string" || typeof body.deviceId !== "string") {
-      return NextResponse.json(
-        { error: "companyPhone and deviceId are required." },
-        { status: 400 },
-      );
+      return apiError("companyPhone and deviceId are required.", 400, false);
     }
 
     const result = await registerCompanyPhone({
@@ -36,6 +45,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      retryable: false,
+      serverTime: new Date().toISOString(),
       companyPhone: {
         id: result.companyPhone.id,
         phoneNumber: result.companyPhone.phoneNumber,
@@ -48,7 +59,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Call tracker registration failed:", error);
     return NextResponse.json(
-      { error: getErrorMessage(error, "Call tracker registration failed.") },
+      {
+        ok: false,
+        error: getErrorMessage(error, "Call tracker registration failed."),
+        retryable: true,
+        serverTime: new Date().toISOString(),
+      },
       { status: 500 },
     );
   }

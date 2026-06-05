@@ -21,7 +21,16 @@ export async function GET() {
         select: { id: true, phoneNumber: true, label: true },
       },
       lead: {
-        select: { id: true, phone: true, displayName: true, status: true, assignedToId: true },
+        select: {
+          id: true,
+          phone: true,
+          displayName: true,
+          status: true,
+          assignedToId: true,
+          createdAt: true,
+          localContactName: true,
+          _count: { select: { sessions: true } },
+        },
       },
       assignedTo: {
         select: { id: true, username: true, email: true },
@@ -30,5 +39,5 @@ export async function GET() {
     orderBy: { firstRingAt: "desc" },
   });
 
-  return NextResponse.json({ ok: true, calls });
+  return NextResponse.json({ ok: true, serverTime: new Date().toISOString(), calls });
 }

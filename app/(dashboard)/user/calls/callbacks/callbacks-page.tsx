@@ -24,13 +24,21 @@ type CallbackLead = {
   assignedToId: string | null;
   nextFollowUpAt: Date | string | null;
   notes: string | null;
+  createdAt: Date | string;
+  localContactName: string | null;
+  _count: { sessions: number };
 };
 
 type CallbackCall = {
   id: string;
   firstRingAt: Date | string;
   status: string;
+  callDirection: string;
   durationSeconds: number | null;
+  simSlot: number | null;
+  simDisplayName: string | null;
+  simCarrierName: string | null;
+  localContactName: string | null;
   companyPhone: { label: string; phoneNumber: string };
   lead: CallbackLead;
 };
@@ -64,9 +72,35 @@ function waitingMinutes(value: Date | string) {
   return `${Math.max(0, Math.floor((Date.now() - date.getTime()) / 60000))} min`;
 }
 
+function isNewLead(lead: CallbackLead) {
+  const createdAt = new Date(lead.createdAt);
+  return lead._count.sessions <= 1 || (!Number.isNaN(createdAt.getTime()) && Date.now() - createdAt.getTime() < 10 * 60 * 1000);
+}
+
 function StatusPill({ children }: { children: string }) {
   return (
     <span className="w-fit rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-zinc-200">
+      {children}
+    </span>
+  );
+}
+
+function SignalPill({
+  children,
+  tone = "zinc",
+}: {
+  children: string;
+  tone?: "zinc" | "accent" | "rose" | "amber";
+}) {
+  const classes = {
+    zinc: "border-white/10 bg-white/5 text-zinc-200",
+    accent: "border-[var(--user-accent-border)] bg-[var(--user-accent-muted)] text-[var(--user-accent-text)]",
+    rose: "border-rose-300/25 bg-rose-300/10 text-rose-100",
+    amber: "border-amber-300/25 bg-amber-300/10 text-amber-100",
+  };
+
+  return (
+    <span className={`w-fit rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${classes[tone]}`}>
       {children}
     </span>
   );
@@ -278,7 +312,12 @@ export function UserCallbacksPageClient({
                 return (
                   <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.8fr_0.9fr_1fr_auto] items-center gap-3 px-4 py-4 text-sm" key={lead.id}>
                     <div>
-                      <p className="font-bold text-white">{lead.displayName}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-bold text-white">{lead.displayName}</p>
+                        {liveCall ? <SignalPill tone="accent">Live</SignalPill> : null}
+                        {missedCall ? <SignalPill tone="rose">Missed</SignalPill> : null}
+                        {isNewLead(lead) ? <SignalPill tone="amber">New</SignalPill> : null}
+                      </div>
                       <a className="mt-1 block text-xs font-bold text-[var(--user-accent-text)] hover:underline" href={`tel:${lead.phone}`}>{lead.phone}</a>
                       <p className="mt-1 text-[11px] text-zinc-500">{lead.assignedToId ? "Assigned to you" : "Unassigned"}</p>
                     </div>
@@ -333,6 +372,10 @@ export function UserCallbacksPageClient({
                 <div className="grid grid-cols-[1.1fr_1fr_0.85fr_0.75fr_auto] items-center gap-3 px-4 py-4 text-sm" key={call.id}>
                   <div>
                     <p className="font-bold text-white">{call.lead.displayName}</p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <SignalPill tone={call.callDirection === "OUTGOING" ? "amber" : "accent"}>{call.callDirection === "OUTGOING" ? "Outgoing" : "Live"}</SignalPill>
+                      {isNewLead(call.lead) ? <SignalPill tone="rose">New</SignalPill> : null}
+                    </div>
                     <a className="mt-1 block text-xs font-bold text-[var(--user-accent-text)] hover:underline" href={`tel:${call.lead.phone}`}>{call.lead.phone}</a>
                   </div>
                   <div>
@@ -372,13 +415,21 @@ export function UserCallbacksPageClient({
               {message ? <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-4 py-2 text-xs text-emerald-200">{message}</div> : null}
 
               {activeCall ? (
-                <section className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                  <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-zinc-400">Call Details</h3>
+                <section className="rounded-lg border border-[var(--user-accent-border)] bg-[var(--user-accent-muted)] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--user-accent-text)]">Call Signal</h3>
+                    <div className="flex flex-wrap gap-2">
+                      <SignalPill tone={activeCall.status === "MISSED" ? "rose" : "accent"}>{activeCall.status === "MISSED" ? "Missed" : "Live"}</SignalPill>
+                      <SignalPill tone={activeCall.callDirection === "OUTGOING" ? "amber" : "zinc"}>{activeCall.callDirection === "OUTGOING" ? "Outgoing" : "Incoming"}</SignalPill>
+                      {isNewLead(activeLead) ? <SignalPill tone="rose">New lead</SignalPill> : null}
+                    </div>
+                  </div>
                   <div className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
                     <div><p className="text-zinc-500">Duration</p><p className="mt-1 font-bold text-white">{formatDuration(activeCall.durationSeconds)}</p></div>
                     <div><p className="text-zinc-500">Started</p><p className="mt-1 font-bold text-white">{formatDate(activeCall.firstRingAt)}</p></div>
                     <div><p className="text-zinc-500">Company phone</p><p className="mt-1 font-bold text-white">{activeCall.companyPhone.label}</p><p className="mt-1 text-zinc-500">{activeCall.companyPhone.phoneNumber}</p></div>
                     <div><p className="text-zinc-500">Status</p><p className="mt-1 font-bold text-white">{activeCall.status.replaceAll("_", " ")}</p></div>
+                    <div><p className="text-zinc-500">SIM / Contact</p><p className="mt-1 font-bold text-white">{activeCall.simDisplayName || activeCall.simCarrierName || (activeCall.simSlot ? `SIM ${activeCall.simSlot}` : "N/A")}</p><p className="mt-1 text-zinc-500">{activeCall.localContactName || activeLead.localContactName || "No local contact"}</p></div>
                   </div>
                 </section>
               ) : null}

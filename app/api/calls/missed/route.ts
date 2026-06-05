@@ -21,6 +21,9 @@ export async function GET() {
           status: true,
           assignedToId: true,
           nextFollowUpAt: true,
+          createdAt: true,
+          localContactName: true,
+          _count: { select: { sessions: true } },
         },
       },
       assignedTo: {
@@ -31,5 +34,5 @@ export async function GET() {
     take: 100,
   });
 
-  return NextResponse.json({ ok: true, calls });
+  return NextResponse.json({ ok: true, serverTime: new Date().toISOString(), calls });
 }

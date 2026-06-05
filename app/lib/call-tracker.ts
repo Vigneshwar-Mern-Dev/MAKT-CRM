@@ -24,15 +24,45 @@ export type CallTrackerEventInput = {
   durationSeconds?: number;
   androidCallLogId?: string;
   simSlot?: number;
+  simDisplayName?: string;
+  simCarrierName?: string;
+  simSubscriptionId?: string;
+  localContactName?: string;
+  retryCount?: number;
   appVersion?: string;
   androidVersion?: string;
   deviceModel?: string;
   batteryPercent?: number;
+  isCharging?: boolean;
+  chargingType?: string;
   networkType?: string;
   pendingSyncCount?: number;
+  lastSyncAttemptAt?: Date;
+  lastSuccessfulSyncAt?: Date;
+  lastSyncError?: string | null;
+  lastSyncErrorAt?: Date | null;
+  syncRetryCount?: number;
   permissionStatus?: Prisma.InputJsonValue;
   rawPayload: Prisma.InputJsonValue;
 };
+
+export type CompanyPhoneHealthInput = Pick<
+  CallTrackerEventInput,
+  | "appVersion"
+  | "androidVersion"
+  | "deviceModel"
+  | "batteryPercent"
+  | "isCharging"
+  | "chargingType"
+  | "networkType"
+  | "pendingSyncCount"
+  | "lastSyncAttemptAt"
+  | "lastSuccessfulSyncAt"
+  | "lastSyncError"
+  | "lastSyncErrorAt"
+  | "syncRetryCount"
+  | "permissionStatus"
+>;
 
 export function normalizeIndianPhoneNumber(value: string | null | undefined) {
   if (!value) {
@@ -202,6 +232,36 @@ function cleanText(value: string | undefined) {
   return value?.trim() || undefined;
 }
 
+function companyPhoneHealthData(input: CompanyPhoneHealthInput) {
+  return {
+    lastSeenAt: new Date(),
+    appVersion: cleanText(input.appVersion),
+    androidVersion: cleanText(input.androidVersion),
+    deviceModel: cleanText(input.deviceModel),
+    batteryPercent: input.batteryPercent,
+    isCharging: input.isCharging,
+    chargingType: cleanText(input.chargingType),
+    networkType: cleanText(input.networkType),
+    pendingSyncCount: input.pendingSyncCount,
+    lastSyncAttemptAt: input.lastSyncAttemptAt,
+    lastSuccessfulSyncAt: input.lastSuccessfulSyncAt,
+    lastSyncError: input.lastSyncError === null ? null : cleanText(input.lastSyncError),
+    lastSyncErrorAt: input.lastSyncErrorAt,
+    syncRetryCount: input.syncRetryCount,
+    permissionStatus: input.permissionStatus,
+  };
+}
+
+export async function updateCompanyPhoneHealth(
+  companyPhoneId: string,
+  input: CompanyPhoneHealthInput,
+) {
+  return db.companyPhone.update({
+    where: { id: companyPhoneId },
+    data: companyPhoneHealthData(input),
+  });
+}
+
 function findOpenSessionArgs(input: {
   companyPhoneId: string;
   callerNumber: string | null;
@@ -251,19 +311,6 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
     throw new Error("A valid companyPhone value is required.");
   }
 
-  const duplicateEvent = await db.callEvent.findUnique({
-    where: { eventId: input.eventId },
-    select: { id: true, sessionId: true },
-  });
-
-  if (duplicateEvent) {
-    return {
-      duplicate: true,
-      eventId: duplicateEvent.id,
-      sessionId: duplicateEvent.sessionId,
-    };
-  }
-
   const companyPhone = await db.companyPhone.findFirst({
     where: {
       deviceId: input.deviceId,
@@ -274,6 +321,27 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
 
   if (!companyPhone) {
     throw new Error("Registered company phone was not found or is inactive.");
+  }
+
+  const duplicateEvent = await db.callEvent.findUnique({
+    where: { eventId: input.eventId },
+    select: { id: true, sessionId: true },
+  });
+
+  if (duplicateEvent) {
+    await updateCompanyPhoneHealth(companyPhone.id, {
+      ...input,
+      lastSyncAttemptAt: input.lastSyncAttemptAt || new Date(),
+      lastSuccessfulSyncAt: input.lastSuccessfulSyncAt || new Date(),
+      lastSyncError: input.lastSyncError === undefined ? null : input.lastSyncError,
+      lastSyncErrorAt: input.lastSyncErrorAt === undefined ? null : input.lastSyncErrorAt,
+    });
+
+    return {
+      duplicate: true,
+      eventId: duplicateEvent.id,
+      sessionId: duplicateEvent.sessionId,
+    };
   }
 
   return db.$transaction(async (tx) => {
@@ -305,16 +373,7 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
     if (!callerNumber && !latestOpenSession && !recentRecoverableSession) {
       await tx.companyPhone.update({
         where: { id: companyPhone.id },
-        data: {
-          lastSeenAt: new Date(),
-          appVersion: cleanText(input.appVersion),
-          androidVersion: cleanText(input.androidVersion),
-          deviceModel: cleanText(input.deviceModel),
-          batteryPercent: input.batteryPercent,
-          networkType: cleanText(input.networkType),
-          pendingSyncCount: input.pendingSyncCount,
-          permissionStatus: input.permissionStatus,
-        },
+        data: companyPhoneHealthData(input),
       });
 
       return {
@@ -335,10 +394,13 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
       where: { phone: effectiveCallerNumber },
       update: {
         lastCompanyPhone: companyPhone.phoneNumber,
+        localContactName: cleanText(input.localContactName) || undefined,
       },
       create: {
         phone: effectiveCallerNumber,
-        displayName: `Caller ${effectiveCallerNumber.slice(-4)}`,
+        displayName:
+          cleanText(input.localContactName) || `Caller ${effectiveCallerNumber.slice(-4)}`,
+        localContactName: cleanText(input.localContactName),
         firstCompanyPhone: companyPhone.phoneNumber,
         lastCompanyPhone: companyPhone.phoneNumber,
       },
@@ -398,6 +460,11 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
             status,
             androidCallLogId: cleanText(input.androidCallLogId) || openSession.androidCallLogId,
             simSlot: input.simSlot ?? openSession.simSlot,
+            simDisplayName: cleanText(input.simDisplayName) || openSession.simDisplayName,
+            simCarrierName: cleanText(input.simCarrierName) || openSession.simCarrierName,
+            simSubscriptionId:
+              cleanText(input.simSubscriptionId) || openSession.simSubscriptionId,
+            localContactName: cleanText(input.localContactName) || openSession.localContactName,
           },
         })
       : await tx.callSession.create({
@@ -414,6 +481,10 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
             status,
             androidCallLogId: cleanText(input.androidCallLogId),
             simSlot: input.simSlot,
+            simDisplayName: cleanText(input.simDisplayName),
+            simCarrierName: cleanText(input.simCarrierName),
+            simSubscriptionId: cleanText(input.simSubscriptionId),
+            localContactName: cleanText(input.localContactName),
           },
         });
 
@@ -428,6 +499,12 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
         callDirection: input.callDirection,
         occurredAt: input.occurredAt,
         durationSeconds: durationSecondsFromLog,
+        retryCount: input.retryCount,
+        simSlot: input.simSlot,
+        simDisplayName: cleanText(input.simDisplayName),
+        simCarrierName: cleanText(input.simCarrierName),
+        simSubscriptionId: cleanText(input.simSubscriptionId),
+        localContactName: cleanText(input.localContactName),
         rawPayload: input.rawPayload,
       },
     });
@@ -444,22 +521,25 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
           caller: effectiveCallerNumber,
           localSessionId,
           durationSeconds,
+          retryCount: input.retryCount,
+          simSlot: input.simSlot,
+          simDisplayName: cleanText(input.simDisplayName),
+          simCarrierName: cleanText(input.simCarrierName),
+          simSubscriptionId: cleanText(input.simSubscriptionId),
+          localContactName: cleanText(input.localContactName),
         },
       },
     });
 
     await tx.companyPhone.update({
       where: { id: companyPhone.id },
-      data: {
-        lastSeenAt: new Date(),
-        appVersion: cleanText(input.appVersion),
-        androidVersion: cleanText(input.androidVersion),
-        deviceModel: cleanText(input.deviceModel),
-        batteryPercent: input.batteryPercent,
-        networkType: cleanText(input.networkType),
-        pendingSyncCount: input.pendingSyncCount,
-        permissionStatus: input.permissionStatus,
-      },
+      data: companyPhoneHealthData({
+        ...input,
+        lastSyncAttemptAt: input.lastSyncAttemptAt || new Date(),
+        lastSuccessfulSyncAt: input.lastSuccessfulSyncAt || new Date(),
+        lastSyncError: input.lastSyncError === undefined ? null : input.lastSyncError,
+        lastSyncErrorAt: input.lastSyncErrorAt === undefined ? null : input.lastSyncErrorAt,
+      }),
     });
 
     return {

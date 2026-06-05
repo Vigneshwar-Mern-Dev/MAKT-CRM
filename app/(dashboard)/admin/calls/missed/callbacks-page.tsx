@@ -38,13 +38,21 @@ type CallbackLead = {
   assignedToId: string | null;
   nextFollowUpAt: Date | string | null;
   notes: string | null;
+  createdAt: Date | string;
+  localContactName: string | null;
+  _count: { sessions: number };
 };
 
 type CallbackCall = {
   id: string;
   firstRingAt: Date | string;
   status: string;
+  callDirection: string;
   durationSeconds: number | null;
+  simSlot: number | null;
+  simDisplayName: string | null;
+  simCarrierName: string | null;
+  localContactName: string | null;
   companyPhone: { label: string; phoneNumber: string };
   lead: CallbackLead;
   assignedTo: { username: string } | null;
@@ -60,6 +68,39 @@ function toDateTimeLocal(value: Date | string | null) {
 
   const offsetMs = date.getTimezoneOffset() * 60 * 1000;
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function minutesSince(value: Date | string, fallbackNow: number) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 0;
+  return Math.max(0, Math.floor((fallbackNow - date.getTime()) / 60000));
+}
+
+function isNewLead(lead: CallbackLead, fallbackNow: number) {
+  const createdAt = new Date(lead.createdAt);
+  return lead._count.sessions <= 1 || (!Number.isNaN(createdAt.getTime()) && fallbackNow - createdAt.getTime() < 10 * 60 * 1000);
+}
+
+function SignalBadge({
+  children,
+  tone = "slate",
+}: {
+  children: string;
+  tone?: "slate" | "cyan" | "emerald" | "amber" | "rose";
+}) {
+  const colors = {
+    slate: "border-white/10 bg-white/5 text-slate-300",
+    cyan: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
+    emerald: "border-emerald-300/20 bg-emerald-300/10 text-emerald-100",
+    amber: "border-amber-300/20 bg-amber-300/10 text-amber-100",
+    rose: "border-rose-300/20 bg-rose-300/10 text-rose-100",
+  };
+
+  return (
+    <span className={`inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${colors[tone]}`}>
+      {children}
+    </span>
+  );
 }
 
 export function CallbacksPage({
@@ -225,11 +266,16 @@ export function CallbacksPage({
               {activeCalls.map((call) => {
                 const ringAgeSeconds = Math.max(0, Math.floor((renderedAt - new Date(call.firstRingAt).getTime()) / 1000));
                 const secondsLeft = call.status === "RINGING" ? Math.max(0, 30 - ringAgeSeconds) : null;
+                const newLead = isNewLead(call.lead, renderedAt);
 
                 return (
                   <article className="grid grid-cols-[1.2fr_1fr_1fr_0.75fr_1fr_auto] items-center gap-3 px-5 py-4 text-sm" key={call.id}>
                     <div className="min-w-0">
-                      <p className="truncate font-black text-white">{call.lead.displayName}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate font-black text-white">{call.lead.displayName}</p>
+                        <SignalBadge tone={call.callDirection === "OUTGOING" ? "amber" : "emerald"}>{call.callDirection === "OUTGOING" ? "Outgoing" : "Live"}</SignalBadge>
+                        {newLead ? <SignalBadge tone="rose">New</SignalBadge> : null}
+                      </div>
                       <a className="mt-1 block text-xs font-bold text-cyan-200 hover:underline" href={`tel:${call.lead.phone}`}>{call.lead.phone}</a>
                     </div>
                     <div className="min-w-0">
@@ -268,14 +314,17 @@ export function CallbacksPage({
             </div>
             <div className="divide-y divide-white/10">
               {calls.map((call) => {
-                const waitingMinutes = Math.max(0, Math.floor((renderedAt - new Date(call.firstRingAt).getTime()) / 60000));
+                const waitingMinutes = minutesSince(call.firstRingAt, renderedAt);
                 const isUrgent = waitingMinutes > 30;
+                const newLead = isNewLead(call.lead, renderedAt);
 
                 return (
                   <article className="grid grid-cols-[1.2fr_1fr_1fr_0.85fr_1fr_auto] items-center gap-3 px-5 py-4 text-sm" key={call.id}>
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate font-black text-white">{call.lead.displayName}</p>
+                        <SignalBadge tone="rose">Missed</SignalBadge>
+                        {newLead ? <SignalBadge tone="cyan">New</SignalBadge> : null}
                         {isUrgent ? <StatusBadge tone="amber">Overdue</StatusBadge> : null}
                       </div>
                       <a className="mt-1 block text-xs font-bold text-cyan-200 hover:underline" href={`tel:${call.lead.phone}`}>{call.lead.phone}</a>
@@ -361,8 +410,15 @@ export function CallbacksPage({
 
             <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
               {activeCall ? (
-                <section className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.04] p-4">
-                  <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-200">Last Call</h3>
+                <section className={`rounded-lg border p-4 ${activeCall.status === "MISSED" ? "border-rose-300/20 bg-rose-300/[0.05]" : "border-cyan-300/15 bg-cyan-300/[0.04]"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-200">Call Signal</h3>
+                    <div className="flex flex-wrap gap-2">
+                      <SignalBadge tone={activeCall.status === "MISSED" ? "rose" : "emerald"}>{activeCall.status === "MISSED" ? "Missed" : "Live"}</SignalBadge>
+                      <SignalBadge tone={activeCall.callDirection === "OUTGOING" ? "amber" : "cyan"}>{activeCall.callDirection === "OUTGOING" ? "Outgoing" : "Incoming"}</SignalBadge>
+                      {isNewLead(activeLead, renderedAt) ? <SignalBadge tone="rose">New lead</SignalBadge> : null}
+                    </div>
+                  </div>
                   <div className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
                     <div>
                       <p className="text-slate-500">Call duration</p>
@@ -380,6 +436,15 @@ export function CallbacksPage({
                     <div>
                       <p className="text-slate-500">Status</p>
                       <p className="mt-1 font-bold text-slate-100">{activeCall.status.replaceAll("_", " ")}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Wait age</p>
+                      <p className="mt-1 font-bold text-slate-100">{minutesSince(activeCall.firstRingAt, renderedAt)} min</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">SIM / Contact</p>
+                      <p className="mt-1 font-bold text-slate-100">{activeCall.simDisplayName || activeCall.simCarrierName || (activeCall.simSlot ? `SIM ${activeCall.simSlot}` : "N/A")}</p>
+                      <p className="mt-1 text-slate-500">{activeCall.localContactName || activeLead.localContactName || "No local contact"}</p>
                     </div>
                   </div>
                 </section>

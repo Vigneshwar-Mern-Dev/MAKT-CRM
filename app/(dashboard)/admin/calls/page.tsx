@@ -26,7 +26,19 @@ export default async function AdminCallCenterPage() {
   const actionableLeadStatuses = ["NEW", "CONTACTED", "FOLLOW_UP", "INTERESTED", "NO_RESPONSE"] as const;
   const outcomeStatuses = ["NOT_INTERESTED", "CONVERTED", "CLOSED"] as const;
 
-  const [todaySessions, missedSessions, liveSessions, callLeads, phones, unhealthyPhones, recentSessions, agents] =
+  const [
+    todaySessions,
+    missedSessions,
+    liveSessions,
+    callLeads,
+    phones,
+    unhealthyPhones,
+    recentSessions,
+    liveDetails,
+    newLeadsToday,
+    overdueMissedSessions,
+    agents,
+  ] =
     await Promise.all([
       db.callSession.count({ where: { firstRingAt: { gte: today } } }),
       db.callSession.count({
@@ -59,6 +71,33 @@ export default async function AdminCallCenterPage() {
         },
         orderBy: { firstRingAt: "desc" },
         take: 8,
+      }),
+      db.callSession.findMany({
+        where: { status: { in: ["RINGING", "ANSWERED"] }, endedAt: null },
+        include: {
+          companyPhone: { select: { phoneNumber: true, label: true } },
+          lead: {
+            select: {
+              id: true,
+              phone: true,
+              displayName: true,
+              status: true,
+              createdAt: true,
+              _count: { select: { sessions: true } },
+            },
+          },
+          assignedTo: { select: { username: true } },
+        },
+        orderBy: { firstRingAt: "desc" },
+        take: 6,
+      }),
+      db.callLead.count({ where: { createdAt: { gte: today }, phone: { not: { startsWith: "UNKNOWN-" } } } }),
+      db.callSession.count({
+        where: {
+          status: "MISSED",
+          firstRingAt: { lt: new Date(currentTime.getTime() - 30 * 60 * 1000) },
+          lead: { status: { in: [...actionableLeadStatuses] } },
+        },
       }),
       db.user.findMany({
         where: { role: "USER" },
@@ -195,6 +234,62 @@ export default async function AdminCallCenterPage() {
         <StatCard detail="Ringing or currently connected" label="Live now" tone="emerald" value={liveSessions} />
         <StatCard detail="Missed sessions on open leads" label="Needs callback" tone="rose" value={missedSessions} />
         <StatCard detail={`${unhealthyPhones} device${unhealthyPhones === 1 ? "" : "s"} need attention`} label="Phones online" tone={unhealthyPhones ? "amber" : "cyan"} value={`${phones - unhealthyPhones}/${phones}`} />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <Panel className={liveSessions ? "border-emerald-300/20 bg-emerald-300/[0.045]" : ""}>
+          <PanelTitle
+            action={<StatusBadge tone={liveSessions ? "emerald" : "slate"}>{liveSessions ? "Live" : "Idle"}</StatusBadge>}
+            description="Calls that Android is reporting in real time."
+            title="Live signal board"
+          />
+          <div className="divide-y divide-white/10">
+            {liveDetails.map((call) => {
+              const isNewLead = call.lead._count.sessions <= 1 || currentTime.getTime() - call.lead.createdAt.getTime() < 10 * 60 * 1000;
+
+              return (
+                <div className="grid gap-3 px-5 py-4 text-sm sm:grid-cols-[1fr_auto] sm:items-center" key={call.id}>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate font-black text-white">{call.lead.displayName}</p>
+                      <StatusBadge tone={call.callDirection === "OUTGOING" ? "amber" : "emerald"}>{call.callDirection === "OUTGOING" ? "Outgoing" : "Incoming"}</StatusBadge>
+                      {isNewLead ? <StatusBadge tone="rose">New lead</StatusBadge> : null}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-slate-500">
+                      {call.lead.phone} <span className="px-1 text-slate-700">/</span> {call.companyPhone.label} <span className="px-1 text-slate-700">/</span> {call.assignedTo?.username || "Unassigned"}
+                    </p>
+                  </div>
+                  <div className="text-xs text-slate-400 sm:text-right">
+                    <CallStatusBadge status={call.status} />
+                    <p className="mt-2">{formatDateTime(call.firstRingAt)}</p>
+                  </div>
+                </div>
+              );
+            })}
+            {!liveDetails.length ? <EmptyState>No live calls right now.</EmptyState> : null}
+          </div>
+        </Panel>
+
+        <Panel>
+          <PanelTitle description="The numbers that should trigger action now." title="Queue pressure" />
+          <div className="grid gap-3 p-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.06] p-4">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100">New today</p>
+              <p className="mt-3 text-3xl font-black text-white">{newLeadsToday}</p>
+              <p className="mt-2 text-xs text-slate-500">Fresh call leads created today</p>
+            </div>
+            <div className="rounded-xl border border-rose-300/15 bg-rose-300/[0.06] p-4">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-rose-100">Overdue</p>
+              <p className="mt-3 text-3xl font-black text-white">{overdueMissedSessions}</p>
+              <p className="mt-2 text-xs text-slate-500">Missed callbacks waiting 30+ min</p>
+            </div>
+            <div className="rounded-xl border border-amber-300/15 bg-amber-300/[0.06] p-4">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-100">Device risk</p>
+              <p className="mt-3 text-3xl font-black text-white">{unhealthyPhones}</p>
+              <p className="mt-2 text-xs text-slate-500">Phones offline, low, or pending sync</p>
+            </div>
+          </div>
+        </Panel>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.35fr_0.65fr]">

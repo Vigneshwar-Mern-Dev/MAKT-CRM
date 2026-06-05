@@ -30,6 +30,8 @@ Response:
 ```json
 {
   "ok": true,
+  "retryable": false,
+  "serverTime": "2026-06-01T07:30:00.000Z",
   "companyPhone": {
     "id": "company-phone-id",
     "phoneNumber": "+918888333553",
@@ -59,7 +61,36 @@ Body:
   "companyPhone": "+918888333553",
   "caller": "+919876543210",
   "eventType": "RINGING",
-  "occurredAt": "2026-06-01T07:30:00.000Z"
+  "callDirection": "INCOMING",
+  "occurredAt": "2026-06-01T07:30:00.000Z",
+  "callSessionLocalId": "android-local-call-session-id",
+  "durationSeconds": 43,
+  "androidCallLogId": "12345",
+  "simSlot": 1,
+  "simDisplayName": "Work SIM",
+  "simCarrierName": "Airtel",
+  "simSubscriptionId": "2",
+  "localContactName": "John Doe",
+  "retryCount": 0,
+  "appVersion": "1.3.0",
+  "androidVersion": "14",
+  "deviceModel": "Samsung SM-A346E",
+  "batteryPercent": 73,
+  "isCharging": false,
+  "chargingType": "USB",
+  "networkType": "5G",
+  "pendingSyncCount": 0,
+  "lastSyncAttemptAt": "2026-06-01T07:30:02.000Z",
+  "lastSuccessfulSyncAt": "2026-06-01T07:30:02.000Z",
+  "lastSyncError": null,
+  "syncRetryCount": 0,
+  "permissionStatus": {
+    "readPhoneState": true,
+    "readCallLog": true,
+    "readContacts": true,
+    "notifications": true,
+    "batteryOptimizationIgnored": true
+  }
 }
 ```
 
@@ -72,8 +103,42 @@ ENDED
 MISSED
 ```
 
+Supported `callDirection` values:
+
+```text
+INCOMING
+OUTGOING
+UNKNOWN
+```
+
 Every event must have a stable unique `eventId`. If Android retries the same
 event, the backend will treat it as a duplicate instead of creating another lead.
+
+Use `eventType` for the call state and `callDirection` for incoming vs outgoing.
+Do not send `OUTGOING` as an `eventType`; that is a direction, not a call state.
+
+Optional metadata rules:
+
+- `callSessionLocalId` should be stable for every event belonging to the same call.
+- `localContactName` is stored as a hint. It should not be treated as verified CRM identity.
+- `simSlot`, `simDisplayName`, `simCarrierName`, and `simSubscriptionId` identify which SIM handled the call.
+- `retryCount`, `pendingSyncCount`, `lastSyncError`, and sync timestamps help diagnose offline/DNS failures.
+- `permissionStatus` should report exact Android permission/background states.
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "retryable": false,
+  "serverTime": "2026-06-01T07:30:02.000Z",
+  "duplicate": false,
+  "eventId": "database-event-id",
+  "sessionId": "database-session-id",
+  "leadId": "database-lead-id",
+  "status": "RINGING"
+}
+```
 
 ## Heartbeat
 
@@ -89,9 +154,63 @@ Body:
 
 ```json
 {
-  "deviceId": "android-device-stable-id"
+  "deviceId": "android-device-stable-id",
+  "appVersion": "1.3.0",
+  "androidVersion": "14",
+  "deviceModel": "Samsung SM-A346E",
+  "batteryPercent": 73,
+  "isCharging": false,
+  "chargingType": "USB",
+  "networkType": "5G",
+  "pendingSyncCount": 0,
+  "lastSyncAttemptAt": "2026-06-01T07:30:02.000Z",
+  "lastSuccessfulSyncAt": "2026-06-01T07:30:02.000Z",
+  "lastSyncError": null,
+  "lastSyncErrorAt": null,
+  "syncRetryCount": 0,
+  "permissionStatus": {
+    "readPhoneState": true,
+    "readCallLog": true,
+    "readContacts": true,
+    "notifications": true,
+    "batteryOptimizationIgnored": true
+  }
 }
 ```
+
+Heartbeat should run even when no calls happen. The CRM marks a phone offline
+after 15 minutes without heartbeat.
+
+Success response:
+
+```json
+{
+  "ok": true,
+  "retryable": false,
+  "serverTime": "2026-06-01T07:30:02.000Z"
+}
+```
+
+## Android Retry Rules
+
+All call-tracker API responses include `ok`, `retryable`, and `serverTime`.
+
+```json
+{
+  "ok": false,
+  "error": "Unauthorized device.",
+  "retryable": false,
+  "serverTime": "2026-06-01T07:30:02.000Z"
+}
+```
+
+Use these rules in the app:
+
+- HTTP `200`: mark the local item synced. If `duplicate` is true, also mark it synced.
+- HTTP `400`: do not retry automatically. The payload is invalid.
+- HTTP `401`: do not retry automatically. The device token or registration is wrong.
+- HTTP `500` or network/DNS/timeout failure: keep pending and retry with WorkManager.
+- Do not parse the English `error` string to decide retry behavior. Use `retryable`.
 
 ## CRM Queue APIs
 

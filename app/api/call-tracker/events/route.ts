@@ -41,8 +41,47 @@ function parseOptionalNumber(value: unknown) {
   return undefined;
 }
 
+function parseOptionalBoolean(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+
+  return undefined;
+}
+
+function parseOptionalDate(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function parseOptionalString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function apiError(error: string, status: number, retryable: boolean) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error,
+      retryable,
+      serverTime: new Date().toISOString(),
+    },
+    { status },
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -51,7 +90,7 @@ export async function POST(request: NextRequest) {
     const token = getBearerToken(request);
 
     if (!token) {
-      return NextResponse.json({ error: "Bearer token is required." }, { status: 401 });
+      return apiError("Bearer token is required.", 401, false);
     }
 
     const eventId = typeof body.eventId === "string" ? body.eventId.trim() : "";
@@ -66,13 +105,17 @@ export async function POST(request: NextRequest) {
     const occurredAt = parseOccurredAt(body.occurredAt);
     const callSessionLocalId =
       typeof body.callSessionLocalId === "string" ? body.callSessionLocalId.trim() : "";
-    const androidCallLogId =
-      typeof body.androidCallLogId === "string" ? body.androidCallLogId.trim() : "";
-    const appVersion = typeof body.appVersion === "string" ? body.appVersion.trim() : "";
-    const androidVersion =
-      typeof body.androidVersion === "string" ? body.androidVersion.trim() : "";
-    const deviceModel = typeof body.deviceModel === "string" ? body.deviceModel.trim() : "";
-    const networkType = typeof body.networkType === "string" ? body.networkType.trim() : "";
+    const androidCallLogId = parseOptionalString(body.androidCallLogId);
+    const appVersion = parseOptionalString(body.appVersion);
+    const androidVersion = parseOptionalString(body.androidVersion);
+    const deviceModel = parseOptionalString(body.deviceModel);
+    const networkType = parseOptionalString(body.networkType);
+    const simDisplayName = parseOptionalString(body.simDisplayName);
+    const simCarrierName = parseOptionalString(body.simCarrierName);
+    const simSubscriptionId = parseOptionalString(body.simSubscriptionId);
+    const localContactName = parseOptionalString(body.localContactName);
+    const lastSyncError =
+      body.lastSyncError === null ? null : parseOptionalString(body.lastSyncError);
 
     if (
       !eventId ||
@@ -81,19 +124,17 @@ export async function POST(request: NextRequest) {
       !callEventTypes.has(eventType) ||
       !occurredAt
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "eventId, deviceId, companyPhone, eventType, and valid occurredAt are required.",
-        },
-        { status: 400 },
+      return apiError(
+        "eventId, deviceId, companyPhone, eventType, and valid occurredAt are required.",
+        400,
+        false,
       );
     }
 
     const authenticatedPhone = await authenticateCompanyPhone(deviceId, token);
 
     if (!authenticatedPhone) {
-      return NextResponse.json({ error: "Unauthorized device." }, { status: 401 });
+      return apiError("Unauthorized device.", 401, false);
     }
 
     const result = await ingestCallEvent({
@@ -106,14 +147,26 @@ export async function POST(request: NextRequest) {
       callDirection: callDirection as CallDirection,
       occurredAt,
       durationSeconds: parseOptionalNumber(body.durationSeconds),
-      androidCallLogId: androidCallLogId || undefined,
+      androidCallLogId,
       simSlot: parseOptionalNumber(body.simSlot),
-      appVersion: appVersion || undefined,
-      androidVersion: androidVersion || undefined,
-      deviceModel: deviceModel || undefined,
+      simDisplayName,
+      simCarrierName,
+      simSubscriptionId,
+      localContactName,
+      retryCount: parseOptionalNumber(body.retryCount),
+      appVersion,
+      androidVersion,
+      deviceModel,
       batteryPercent: parseOptionalNumber(body.batteryPercent),
-      networkType: networkType || undefined,
+      isCharging: parseOptionalBoolean(body.isCharging),
+      chargingType: parseOptionalString(body.chargingType),
+      networkType,
       pendingSyncCount: parseOptionalNumber(body.pendingSyncCount),
+      lastSyncAttemptAt: parseOptionalDate(body.lastSyncAttemptAt),
+      lastSuccessfulSyncAt: parseOptionalDate(body.lastSuccessfulSyncAt),
+      lastSyncError,
+      lastSyncErrorAt: parseOptionalDate(body.lastSyncErrorAt),
+      syncRetryCount: parseOptionalNumber(body.syncRetryCount),
       permissionStatus:
         body.permissionStatus && typeof body.permissionStatus === "object"
           ? (body.permissionStatus as Prisma.InputJsonValue)
@@ -121,11 +174,21 @@ export async function POST(request: NextRequest) {
       rawPayload: body as Prisma.InputJsonValue,
     });
 
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({
+      ok: true,
+      retryable: false,
+      serverTime: new Date().toISOString(),
+      ...result,
+    });
   } catch (error) {
     console.error("Call tracker event ingestion failed:", error);
     return NextResponse.json(
-      { error: getErrorMessage(error, "Call tracker event ingestion failed.") },
+      {
+        ok: false,
+        error: getErrorMessage(error, "Call tracker event ingestion failed."),
+        retryable: true,
+        serverTime: new Date().toISOString(),
+      },
       { status: 500 },
     );
   }

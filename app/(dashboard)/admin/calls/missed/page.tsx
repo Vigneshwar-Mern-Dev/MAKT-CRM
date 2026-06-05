@@ -20,6 +20,9 @@ export default async function AdminMissedCallsPage() {
     assignedToId: true,
     nextFollowUpAt: true,
     notes: true,
+    createdAt: true,
+    localContactName: true,
+    _count: { select: { sessions: true } },
   };
   const [activeCalls, calls, agents] = await Promise.all([
     db.callSession.findMany({

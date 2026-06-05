@@ -297,8 +297,15 @@ model CompanyPhone {
   androidVersion String?  @map("android_version")
   deviceModel   String?   @map("device_model")
   batteryPercent Int?     @map("battery_percent")
+  isCharging    Boolean?  @map("is_charging")
+  chargingType  String?   @map("charging_type")
   networkType   String?   @map("network_type")
   pendingSyncCount Int?   @map("pending_sync_count")
+  lastSyncAttemptAt DateTime? @map("last_sync_attempt_at")
+  lastSuccessfulSyncAt DateTime? @map("last_successful_sync_at")
+  lastSyncError String?   @map("last_sync_error") @db.Text
+  lastSyncErrorAt DateTime? @map("last_sync_error_at")
+  syncRetryCount Int?     @map("sync_retry_count")
   permissionStatus Json?  @map("permission_status")
 
   events   CallEvent[]
@@ -309,6 +316,8 @@ model CompanyPhone {
 
   @@index([deviceId])
   @@index([phoneNumber])
+  @@index([lastSeenAt], map: "CompanyPhone_last_seen_at_idx")
+  @@index([pendingSyncCount], map: "CompanyPhone_pending_sync_count_idx")
 }
 
 model CallLead {
@@ -316,6 +325,7 @@ model CallLead {
   phone           String         @unique
   displayName     String         @map("display_name")
   email           String?
+  localContactName String?       @map("local_contact_name")
   city            String?
   address         String?        @db.Text
   ownershipType   String?        @map("ownership_type")
@@ -368,6 +378,12 @@ model CallEvent {
   occurredAt     DateTime      @map("occurred_at")
   receivedAt     DateTime      @default(now()) @map("received_at")
   durationSeconds Int?         @map("duration_seconds")
+  retryCount      Int?         @map("retry_count")
+  simSlot         Int?         @map("sim_slot")
+  simDisplayName  String?      @map("sim_display_name")
+  simCarrierName  String?      @map("sim_carrier_name")
+  simSubscriptionId String?    @map("sim_subscription_id")
+  localContactName String?     @map("local_contact_name")
   rawPayload     Json          @map("raw_payload")
 
   @@index([companyPhoneId])
@@ -376,6 +392,7 @@ model CallEvent {
   @@index([callerNumber])
   @@index([eventType])
   @@index([occurredAt])
+  @@index([simSlot], map: "CallEvent_sim_slot_idx")
 }
 
 model CallSession {
@@ -394,6 +411,10 @@ model CallSession {
   durationSeconds Int?             @map("duration_seconds")
   androidCallLogId String?         @map("android_call_log_id")
   simSlot        Int?              @map("sim_slot")
+  simDisplayName String?           @map("sim_display_name")
+  simCarrierName String?           @map("sim_carrier_name")
+  simSubscriptionId String?         @map("sim_subscription_id")
+  localContactName String?         @map("local_contact_name")
   assignedToId   String?           @map("assigned_to_id")
   assignedTo     User?             @relation("CallSessions", fields: [assignedToId], references: [id], onDelete: SetNull)
 
@@ -414,6 +435,7 @@ model CallSession {
   @@index([assignedToId])
   @@index([assignedToId, firstRingAt])
   @@index([firstRingAt])
+  @@index([simSlot], map: "CallSession_sim_slot_idx")
 }
 
 model CallActivity {

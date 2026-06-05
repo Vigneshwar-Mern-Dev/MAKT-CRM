@@ -7,7 +7,12 @@ type LiveCall = {
   id: string;
   callerNumber: string;
   status: string;
+  callDirection: string;
   firstRingAt: string;
+  simSlot: number | null;
+  simDisplayName: string | null;
+  simCarrierName: string | null;
+  localContactName: string | null;
   companyPhone: {
     phoneNumber: string;
     label: string;
@@ -18,6 +23,9 @@ type LiveCall = {
     displayName: string;
     status: string;
     assignedToId: string | null;
+    createdAt: string;
+    localContactName: string | null;
+    _count: { sessions: number };
   };
 };
 
@@ -32,6 +40,11 @@ function formatTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function isNewLead(call: LiveCall, now: number) {
+  const createdAt = new Date(call.lead.createdAt).getTime();
+  return call.lead._count.sessions <= 1 || (!Number.isNaN(createdAt) && now - createdAt < 10 * 60 * 1000);
 }
 
 export function IncomingCallPopup() {
@@ -83,6 +96,8 @@ export function IncomingCallPopup() {
   }
 
   const isRinging = visibleCall.status === "RINGING";
+  const isOutgoing = visibleCall.callDirection === "OUTGOING";
+  const newLead = isNewLead(visibleCall, now);
   const ringAgeSeconds = Math.max(
     0,
     Math.floor((now - new Date(visibleCall.firstRingAt).getTime()) / 1000),
@@ -94,12 +109,19 @@ export function IncomingCallPopup() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-[60] w-[min(calc(100vw-2.5rem),380px)] rounded-lg border border-cyan-300/30 bg-[#0d1118] p-4 shadow-2xl shadow-cyan-950/40">
+    <div className={`fixed bottom-5 right-5 z-[60] w-[min(calc(100vw-2.5rem),400px)] rounded-lg border p-4 shadow-2xl ${isRinging ? "border-emerald-300/35 bg-[#0d1512] shadow-emerald-950/40" : "border-cyan-300/30 bg-[#0d1118] shadow-cyan-950/40"}`}>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-cyan-200">
-            {isRinging ? "Incoming Call" : "Active Call"}
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${isOutgoing ? "border-amber-300/25 bg-amber-300/10 text-amber-100" : "border-emerald-300/25 bg-emerald-300/10 text-emerald-100"}`}>
+              {isOutgoing ? "Outgoing" : isRinging ? "Live Ringing" : "Active Call"}
+            </span>
+            {newLead ? (
+              <span className="rounded-full border border-rose-300/25 bg-rose-300/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-rose-100">
+                New lead
+              </span>
+            ) : null}
+          </div>
           <h2 className="mt-2 text-xl font-bold text-white">
             {visibleCall.lead.displayName}
           </h2>
@@ -138,6 +160,16 @@ export function IncomingCallPopup() {
           <p className="mt-1 text-slate-500">
             {isRinging ? `${ringSecondsLeft}s before callback queue` : "On call"}
           </p>
+        </div>
+        <div>
+          <p className="text-slate-500">Lead Signal</p>
+          <p className="mt-1 font-semibold text-slate-200">{newLead ? "First touch" : `${visibleCall.lead._count.sessions} calls`}</p>
+          <p className="mt-1 text-slate-500">{visibleCall.lead.status.replaceAll("_", " ")}</p>
+        </div>
+        <div>
+          <p className="text-slate-500">SIM / Contact</p>
+          <p className="mt-1 font-semibold text-slate-200">{visibleCall.simDisplayName || visibleCall.simCarrierName || (visibleCall.simSlot ? `SIM ${visibleCall.simSlot}` : "N/A")}</p>
+          <p className="mt-1 truncate text-slate-500">{visibleCall.localContactName || visibleCall.lead.localContactName || "No local contact"}</p>
         </div>
       </div>
 
