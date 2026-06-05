@@ -42,6 +42,26 @@ Response:
 }
 ```
 
+Registration error response:
+
+```json
+{
+  "ok": false,
+  "code": "INVALID_REGISTRATION_SECRET",
+  "error": "Unauthorized registration secret.",
+  "retryable": false,
+  "serverTime": "2026-06-01T07:30:02.000Z"
+}
+```
+
+Registration error codes:
+
+- `INVALID_REGISTRATION_SECRET`: the app secret does not match the CRM env value.
+- `REGISTRATION_SECRET_NOT_CONFIGURED`: `CALL_TRACKER_REGISTRATION_SECRET` is missing in the deployed CRM environment.
+- `INVALID_REGISTRATION_PAYLOAD`: `companyPhone` or `deviceId` was missing.
+- `DEVICE_PHONE_CONFLICT`: the phone number and device ID are already linked to different CRM phone records.
+- `REGISTRATION_FAILED`: database or unexpected server failure. Check CRM/Vercel logs.
+
 ## Send Call Event
 
 `POST /api/call-tracker/events`
