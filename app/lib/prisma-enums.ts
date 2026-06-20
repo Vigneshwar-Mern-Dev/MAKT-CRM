@@ -11,6 +11,8 @@ import type {
   CallSessionStatus as PrismaCallSessionStatus,
   TaskPriority as PrismaTaskPriority,
   TaskStatus as PrismaTaskStatus,
+  WhatsAppConnectionStatus as PrismaWhatsAppConnectionStatus,
+  WhatsAppLeadStatus as PrismaWhatsAppLeadStatus,
 } from "@prisma/client";
 
 export type Role = PrismaRole;
@@ -25,6 +27,8 @@ export type CallDirection = PrismaCallDirection;
 export type CallSessionStatus = PrismaCallSessionStatus;
 export type CallLeadStatus = PrismaCallLeadStatus;
 export type CallActivityType = PrismaCallActivityType;
+export type WhatsAppConnectionStatus = PrismaWhatsAppConnectionStatus;
+export type WhatsAppLeadStatus = PrismaWhatsAppLeadStatus;
 
 export const Role = {
   ADMIN: "ADMIN",
@@ -120,3 +124,25 @@ export const CallActivityType = {
   NOTE_ADDED: "NOTE_ADDED",
   FOLLOW_UP_UPDATE: "FOLLOW_UP_UPDATE",
 } as const satisfies Record<PrismaCallActivityType, PrismaCallActivityType>;
+
+export const WhatsAppConnectionStatus = {
+  DISCONNECTED: "DISCONNECTED",
+  QR_REQUIRED: "QR_REQUIRED",
+  CONNECTING: "CONNECTING",
+  CONNECTED: "CONNECTED",
+  ERROR: "ERROR",
+  PAUSED: "PAUSED",
+} as const satisfies Record<
+  PrismaWhatsAppConnectionStatus,
+  PrismaWhatsAppConnectionStatus
+>;
+
+export const WhatsAppLeadStatus = {
+  NEW: "NEW",
+  OPTED_IN: "OPTED_IN",
+  QUEUED: "QUEUED",
+  SENT: "SENT",
+  FAILED: "FAILED",
+  REPLIED: "REPLIED",
+  DO_NOT_CONTACT: "DO_NOT_CONTACT",
+} as const satisfies Record<PrismaWhatsAppLeadStatus, PrismaWhatsAppLeadStatus>;

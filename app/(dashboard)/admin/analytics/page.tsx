@@ -1,583 +1,325 @@
 import { db } from "@/app/lib/db";
-import { ANALYTICS_ROW_LIMIT } from "@/app/lib/query-limits";
+import { CallLeadStatus, TaskPriority, TaskStatus } from "@/app/lib/prisma-enums";
 import {
-  LeadSource,
-  LeadStage,
-  SheetConnectionStatus,
-  TaskPriority,
-  TaskStatus,
-} from "@/app/lib/prisma-enums";
+  DailyCallsChart,
+  LeadStatusDonut,
+  TaskCompletionChart,
+  WaDailySendsChart,
+  type DailyCallPoint,
+  type StatusPoint,
+  type TaskTrendPoint,
+  type WaDailyPoint,
+} from "./charts";
 
-type LeadAnalyticsRow = {
-  id: string;
-  source: LeadSource;
-  stage: LeadStage;
-  assignedToId: string | null;
-  phone: string | null;
-  city: string | null;
-  notes: string | null;
-  lastContactedAt: Date | null;
-  nextFollowUpAt: Date | null;
-  createdAt: Date;
-  timestamp: Date;
-};
-
-type TaskAnalyticsRow = {
-  status: TaskStatus;
-  priority: TaskPriority;
-  assignedToId: string;
-  dueDate: Date | null;
-};
-
-const leadStages = [
-  LeadStage.NEW,
-  LeadStage.CONTACTED,
-  LeadStage.FOLLOW_UP,
-  LeadStage.INTERESTED,
-  LeadStage.NOT_INTERESTED,
-  LeadStage.NO_RESPONSE,
-  LeadStage.CONVERTED,
-  LeadStage.CLOSED,
+const taskStatuses = [TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.COMPLETED, TaskStatus.CANCELLED];
+const callLeadStatuses = [
+  CallLeadStatus.NEW, CallLeadStatus.CONTACTED, CallLeadStatus.FOLLOW_UP,
+  CallLeadStatus.INTERESTED, CallLeadStatus.NOT_INTERESTED, CallLeadStatus.NO_RESPONSE,
+  CallLeadStatus.CONVERTED, CallLeadStatus.CLOSED,
 ];
-
-const funnelStages = [
-  LeadStage.NEW,
-  LeadStage.CONTACTED,
-  LeadStage.INTERESTED,
-  LeadStage.CONVERTED,
-];
-
-const taskStatuses = [
-  TaskStatus.PENDING,
-  TaskStatus.IN_PROGRESS,
-  TaskStatus.COMPLETED,
-  TaskStatus.CANCELLED,
-];
-
-const inactiveLeadStages: LeadStage[] = [
-  LeadStage.CONVERTED,
-  LeadStage.CLOSED,
-  LeadStage.NOT_INTERESTED,
-];
-
-const followUpRequiredStages: LeadStage[] = [
-  LeadStage.CONTACTED,
-  LeadStage.FOLLOW_UP,
-  LeadStage.INTERESTED,
-];
-
-const closedTaskStatuses: TaskStatus[] = [
-  TaskStatus.COMPLETED,
-  TaskStatus.CANCELLED,
-];
-
-const urgentTaskPriorities: TaskPriority[] = [
-  TaskPriority.URGENT,
-  TaskPriority.HIGH,
-];
-
-const sourceLabels: Record<LeadSource, string> = {
-  WEBSITE: "Website",
-  INSTAGRAM: "Instagram",
-};
-
-const stageTones: Record<LeadStage, string> = {
-  NEW: "border-sky-300/20 bg-sky-300/10 text-sky-100",
-  CONTACTED: "border-indigo-300/20 bg-indigo-300/10 text-indigo-100",
-  FOLLOW_UP: "border-amber-300/20 bg-amber-300/10 text-amber-100",
-  INTERESTED: "border-emerald-300/20 bg-emerald-300/10 text-emerald-100",
-  NOT_INTERESTED: "border-rose-300/20 bg-rose-300/10 text-rose-100",
-  NO_RESPONSE: "border-zinc-300/20 bg-zinc-300/10 text-zinc-200",
-  CONVERTED: "border-teal-300/20 bg-teal-300/10 text-teal-100",
-  CLOSED: "border-purple-300/20 bg-purple-300/10 text-purple-100",
-};
-
-const sourceTones: Record<LeadSource, string> = {
-  WEBSITE: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
-  INSTAGRAM: "border-fuchsia-300/20 bg-fuchsia-300/10 text-fuchsia-100",
-};
 
 function label(value: string) {
-  return value
-    .toLowerCase()
-    .split("_")
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
+  return value.toLowerCase().split("_").map((p) => p[0].toUpperCase() + p.slice(1)).join(" ");
+}
+function formatNumber(value: number) { return new Intl.NumberFormat("en-IN").format(value); }
+function percent(value: number, total: number) { return total ? `${Math.round((value / total) * 100)}%` : "0%"; }
+function barWidth(value: number, max: number) { return max ? `${Math.max(4, Math.round((value / max) * 100))}%` : "0%"; }
+
+type Range = "all" | "month" | "week" | "3day" | "today";
+function getDateRange(range: Range): Date | undefined {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  if (range === "today") return d;
+  if (range === "3day") { d.setDate(d.getDate() - 3); return d; }
+  if (range === "week") { d.setDate(d.getDate() - 7); return d; }
+  if (range === "month") { d.setDate(1); return d; }
+  return undefined;
 }
 
-function percent(value: number, total: number) {
-  if (!total) {
-    return "0%";
-  }
-
-  return `${Math.round((value / total) * 100)}%`;
-}
-
-function barWidth(value: number, max: number) {
-  if (!max) {
-    return "0%";
-  }
-
-  return `${Math.max(4, Math.round((value / max) * 100))}%`;
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-IN").format(value);
-}
-
-function formatDateTime(value: Date | null | undefined) {
-  if (!value) {
-    return "Never";
-  }
-
-  return value.toLocaleString("en-IN", {
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    month: "short",
+// Generate last N days labels
+function last14Days() {
+  return Array.from({ length: 14 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (13 - i));
+    return d.toISOString().slice(0, 10);
   });
 }
 
-function normalizePhone(value: string | null) {
-  if (!value) {
-    return "";
-  }
+type AnalyticsPageProps = { searchParams: Promise<{ range?: string }> };
 
-  return value.replace(/\D/g, "");
-}
+async function getAnalyticsData(since?: Date) {
+  const createdAtFilter = since ? { gte: since } : undefined;
+  const days = last14Days();
+  const start14 = new Date(); start14.setDate(start14.getDate() - 13); start14.setHours(0,0,0,0);
 
-function isActiveLead(lead: LeadAnalyticsRow) {
-  return !inactiveLeadStages.includes(lead.stage);
-}
-
-function isOpenTask(task: TaskAnalyticsRow) {
-  return !closedTaskStatuses.includes(task.status);
-}
-
-function buildDayKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-async function getAnalyticsData() {
   try {
-    const [websiteLeads, instagramLeads, tasks, users, integrations] =
-      await Promise.all([
-        db.websiteLead.findMany({
-          take: ANALYTICS_ROW_LIMIT,
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            stage: true,
-            assignedToId: true,
-            phone: true,
-            city: true,
-            notes: true,
-            lastContactedAt: true,
-            nextFollowUpAt: true,
-            createdAt: true,
-            timestamp: true,
-          },
-        }),
-        db.instagramLead.findMany({
-          take: ANALYTICS_ROW_LIMIT,
-          orderBy: { createdAt: "desc" },
-          select: {
-            id: true,
-            stage: true,
-            assignedToId: true,
-            phone: true,
-            city: true,
-            notes: true,
-            lastContactedAt: true,
-            nextFollowUpAt: true,
-            createdAt: true,
-            timestamp: true,
-          },
-        }),
-        db.task.findMany({
-          take: ANALYTICS_ROW_LIMIT,
-          orderBy: { createdAt: "desc" },
-          select: {
-            status: true,
-            priority: true,
-            assignedToId: true,
-            dueDate: true,
-          },
-        }),
-        db.user.findMany({
-          orderBy: { username: "asc" },
-          select: {
-            id: true,
-            username: true,
-            email: true,
-            department: true,
-            role: true,
-          },
-        }),
-        db.leadIntegration.findMany(),
-      ]);
+    const [
+      taskStatusCounts, taskPriorityCounts, overdueTasks,
+      callLeadStatusCounts, openFollowUps, users,
+      callSessions14, waSent14, waReplied14, tasks14,
+      topCities, propertyTypes, agentCallStats, agentCompletedTasks, locationSentCount,
+    ] = await Promise.all([
+      db.task.groupBy({ by: ["status"], _count: { _all: true }, where: createdAtFilter ? { createdAt: createdAtFilter } : undefined }),
+      db.task.groupBy({ by: ["priority"], _count: { _all: true }, where: createdAtFilter ? { createdAt: createdAtFilter } : undefined }),
+      db.task.count({ where: { dueDate: { lt: new Date() }, status: { notIn: [TaskStatus.COMPLETED, TaskStatus.CANCELLED] } } }),
+      db.callLead.groupBy({ by: ["status"], _count: { _all: true }, where: createdAtFilter ? { createdAt: createdAtFilter } : undefined }),
+      db.callFollowUp.count({ where: { completedAt: null } }),
+      db.user.findMany({ orderBy: { username: "asc" }, select: { id: true, username: true, role: true, _count: { select: { assignedTasks: true, callLeads: true, callFollowUps: true } } } }),
+      // Raw daily data for charts
+      db.callSession.findMany({ where: { firstRingAt: { gte: start14 } }, select: { firstRingAt: true, callDirection: true } }),
+      db.whatsAppLead.findMany({ where: { lastSentAt: { gte: start14 } }, select: { lastSentAt: true } }),
+      db.whatsAppLead.findMany({ where: { lastReplyAt: { gte: start14 } }, select: { lastReplyAt: true } }),
+      db.task.findMany({ where: { createdAt: { gte: start14 } }, select: { createdAt: true, status: true, updatedAt: true } }),
+      // Lead Demographics & Stats
+      db.callLead.groupBy({
+        by: ["city"],
+        _count: { _all: true },
+        where: {
+          NOT: [
+            { city: null },
+            { city: "" }
+          ],
+          createdAt: createdAtFilter ? { gte: since } : undefined,
+        },
+        orderBy: { _count: { city: "desc" } },
+        take: 5,
+      }),
+      db.callLead.groupBy({
+        by: ["ownershipType"],
+        _count: { _all: true },
+        where: {
+          NOT: [
+            { ownershipType: null },
+            { ownershipType: "" }
+          ],
+          createdAt: createdAtFilter ? { gte: since } : undefined,
+        },
+      }),
+      // Agent Productivity
+      db.callSession.groupBy({
+        by: ["assignedToId"],
+        _count: { _all: true },
+        _sum: { durationSeconds: true },
+        where: {
+          status: { in: ["ANSWERED", "COMPLETED"] },
+          firstRingAt: createdAtFilter ? { gte: since } : undefined,
+        },
+      }),
+      db.task.groupBy({
+        by: ["assignedToId"],
+        _count: { _all: true },
+        where: {
+          status: "COMPLETED",
+          createdAt: createdAtFilter ? { gte: since } : undefined,
+        },
+      }),
+      // Location link sent rate
+      db.callLead.count({
+        where: {
+          locationSent: true,
+          createdAt: createdAtFilter ? { gte: since } : undefined,
+        },
+      }),
+    ]);
+
+    // Build daily call chart data
+    const callsByDay: Record<string, { incoming: number; outgoing: number }> = {};
+    days.forEach((d) => { callsByDay[d] = { incoming: 0, outgoing: 0 }; });
+    for (const s of callSessions14) {
+      const day = new Date(s.firstRingAt).toISOString().slice(0, 10);
+      if (callsByDay[day]) {
+        if (s.callDirection === "INCOMING") callsByDay[day].incoming++;
+        else callsByDay[day].outgoing++;
+      }
+    }
+    const dailyCalls: DailyCallPoint[] = days.map((d) => ({ date: d.slice(5), ...callsByDay[d] }));
+
+    // Build daily WA sends data
+    const waSentByDay: Record<string, number> = {};
+    const waRepliedByDay: Record<string, number> = {};
+    days.forEach((d) => { waSentByDay[d] = 0; waRepliedByDay[d] = 0; });
+    for (const w of waSent14) {
+      const day = new Date(w.lastSentAt!).toISOString().slice(0, 10);
+      if (waSentByDay[day] !== undefined) waSentByDay[day]++;
+    }
+    for (const w of waReplied14) {
+      const day = new Date(w.lastReplyAt!).toISOString().slice(0, 10);
+      if (waRepliedByDay[day] !== undefined) waRepliedByDay[day]++;
+    }
+    const dailyWa: WaDailyPoint[] = days.map((d) => ({ date: d.slice(5), sent: waSentByDay[d], replied: waRepliedByDay[d] }));
+
+    // Build daily task activity
+    const taskCreatedByDay: Record<string, number> = {};
+    const taskCompletedByDay: Record<string, number> = {};
+    days.forEach((d) => { taskCreatedByDay[d] = 0; taskCompletedByDay[d] = 0; });
+    for (const t of tasks14) {
+      const cDay = new Date(t.createdAt).toISOString().slice(0, 10);
+      if (taskCreatedByDay[cDay] !== undefined) taskCreatedByDay[cDay]++;
+      if (t.status === "COMPLETED") {
+        const uDay = new Date(t.updatedAt).toISOString().slice(0, 10);
+        if (taskCompletedByDay[uDay] !== undefined) taskCompletedByDay[uDay]++;
+      }
+    }
+    const dailyTasks: TaskTrendPoint[] = days.map((d) => ({ date: d.slice(5), created: taskCreatedByDay[d], completed: taskCompletedByDay[d] }));
 
     return {
       data: {
-        leads: [
-          ...websiteLeads.map((lead) => ({
-            ...lead,
-            source: LeadSource.WEBSITE,
-          })),
-          ...instagramLeads.map((lead) => ({
-            ...lead,
-            source: LeadSource.INSTAGRAM,
-          })),
-        ],
-        tasks,
+        taskStatusCounts,
+        taskPriorityCounts,
+        overdueTasks,
+        callLeadStatusCounts,
+        openFollowUps,
         users,
-        integrations,
+        dailyCalls,
+        dailyWa,
+        dailyTasks,
+        topCities,
+        propertyTypes,
+        agentCallStats,
+        agentCompletedTasks,
+        locationSentCount,
       },
       error: null,
     };
   } catch {
     return {
       data: {
-        leads: [] as LeadAnalyticsRow[],
-        tasks: [] as TaskAnalyticsRow[],
-        users: [] as Array<{
-          id: string;
-          username: string;
-          email: string;
-          department: string;
-          role: string;
-        }>,
-        integrations: [] as Array<{
-          source: LeadSource;
-          status: SheetConnectionStatus;
-          lastSyncedAt: Date | null;
-          lastTestedAt: Date | null;
-          importedCount: number;
-          failedCount: number;
-          lastError: string | null;
-        }>,
+        taskStatusCounts: [],
+        taskPriorityCounts: [],
+        overdueTasks: 0,
+        callLeadStatusCounts: [],
+        openFollowUps: 0,
+        users: [],
+        dailyCalls: [],
+        dailyWa: [],
+        dailyTasks: [],
+        topCities: [],
+        propertyTypes: [],
+        agentCallStats: [],
+        agentCompletedTasks: [],
+        locationSentCount: 0,
       },
       error: "Database is unreachable. Analytics numbers are temporarily unavailable.",
     };
   }
 }
 
-export default async function AdminAnalyticsPage() {
-  const { data, error } = await getAnalyticsData();
-  const leads: LeadAnalyticsRow[] = data.leads;
-  const tasks: TaskAnalyticsRow[] = data.tasks;
-  const { users, integrations } = data;
-  const now = new Date();
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const startOfTomorrow = new Date(startOfToday);
-  startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
-  const staleCutoff = new Date(now);
-  staleCutoff.setHours(staleCutoff.getHours() - 48);
+const STATUS_COLORS: Record<string, string> = {
+  NEW: "#67e8f9", CONTACTED: "#38bdf8", FOLLOW_UP: "#fbbf24",
+  INTERESTED: "#4ade80", NOT_INTERESTED: "#f87171", NO_RESPONSE: "#94a3b8",
+  CONVERTED: "#34d399", CLOSED: "#71717a",
+};
 
-  const totalLeads = leads.length;
-  const convertedLeads = leads.filter(
-    (lead) => lead.stage === LeadStage.CONVERTED,
-  ).length;
-  const conversionRate = percent(convertedLeads, totalLeads);
-  const unassignedLeads = leads.filter(
-    (lead) => isActiveLead(lead) && !lead.assignedToId,
-  ).length;
-  const overdueFollowUps = leads.filter(
-    (lead) =>
-      isActiveLead(lead) &&
-      lead.nextFollowUpAt !== null &&
-      lead.nextFollowUpAt < now,
-  ).length;
-  const syncFailures = integrations.reduce(
-    (total, integration) => total + integration.failedCount,
-    0,
-  );
+function formatDuration(seconds: number | null) {
+  if (!seconds) return "0s";
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`;
+}
 
-  const stageCounts = leadStages.map((stage) => ({
-    stage,
-    count: leads.filter((lead) => lead.stage === stage).length,
-  }));
-  const maxStageCount = Math.max(...stageCounts.map((item) => item.count), 0);
+export default async function AdminAnalyticsPage({ searchParams }: AnalyticsPageProps) {
+  const params = await searchParams;
+  const range: Range = (params.range === "week" || params.range === "month" || params.range === "3day" || params.range === "today") ? params.range : "all";
+  const since = getDateRange(range);
+  const { data, error } = await getAnalyticsData(since);
 
-  const sourceStats = [LeadSource.WEBSITE, LeadSource.INSTAGRAM].map(
-    (source) => {
-      const sourceLeads = leads.filter((lead) => lead.source === source);
-      const sourceConverted = sourceLeads.filter(
-        (lead) => lead.stage === LeadStage.CONVERTED,
-      ).length;
-      const sourceFollowUps = sourceLeads.filter(
-        (lead) => lead.stage === LeadStage.FOLLOW_UP,
-      ).length;
-      const sourceNoResponse = sourceLeads.filter(
-        (lead) => lead.stage === LeadStage.NO_RESPONSE,
-      ).length;
+  const taskCounts = Object.fromEntries(taskStatuses.map((s) => [s, data.taskStatusCounts.find((r) => r.status === s)?._count._all ?? 0])) as Record<TaskStatus, number>;
+  const callCounts = Object.fromEntries(callLeadStatuses.map((s) => [s, data.callLeadStatusCounts.find((r) => r.status === s)?._count._all ?? 0])) as Record<CallLeadStatus, number>;
+  const totalTasks = Object.values(taskCounts).reduce((a, b) => a + b, 0);
+  const totalCallLeads = Object.values(callCounts).reduce((a, b) => a + b, 0);
+  const openTasks = taskCounts.PENDING + taskCounts.IN_PROGRESS;
+  const openCallLeads = callCounts.NEW + callCounts.CONTACTED + callCounts.FOLLOW_UP + callCounts.INTERESTED + callCounts.NO_RESPONSE;
+  const urgentTasks = (data.taskPriorityCounts.find((r) => r.priority === TaskPriority.URGENT)?._count._all ?? 0) + (data.taskPriorityCounts.find((r) => r.priority === TaskPriority.HIGH)?._count._all ?? 0);
 
-      return {
-        source,
-        total: sourceLeads.length,
-        converted: sourceConverted,
-        conversionRate: percent(sourceConverted, sourceLeads.length),
-        followUps: sourceFollowUps,
-        noResponse: sourceNoResponse,
-      };
-    },
-  );
-  const maxSourceTotal = Math.max(...sourceStats.map((item) => item.total), 0);
+  const donutData: StatusPoint[] = callLeadStatuses.map((s) => ({ name: label(s), value: callCounts[s], color: STATUS_COLORS[s] ?? "#64748b" })).filter((d) => d.value > 0);
 
-  const openTaskCountsByUser = tasks.reduce<Record<string, number>>(
-    (acc, task) => {
-      if (isOpenTask(task)) {
-        acc[task.assignedToId] = (acc[task.assignedToId] || 0) + 1;
-      }
+  const rangeLabel = range === "today" ? "Today" : range === "3day" ? "Last 3 days" : range === "week" ? "This week" : range === "month" ? "This month" : "All time";
 
-      return acc;
-    },
-    {},
-  );
-  const agentRows = users
-    .map((user) => {
-      const assignedLeads = leads.filter((lead) => lead.assignedToId === user.id);
-      const contacted = assignedLeads.filter(
-        (lead) => lead.lastContactedAt || lead.stage !== LeadStage.NEW,
-      ).length;
-      const converted = assignedLeads.filter(
-        (lead) => lead.stage === LeadStage.CONVERTED,
-      ).length;
-      const overdue = assignedLeads.filter(
-        (lead) =>
-          isActiveLead(lead) &&
-          lead.nextFollowUpAt !== null &&
-          lead.nextFollowUpAt < now,
-      ).length;
-
-      return {
-        id: user.id,
-        username: user.username,
-        department: user.department,
-        assigned: assignedLeads.length,
-        contacted,
-        converted,
-        conversionRate: percent(converted, assignedLeads.length),
-        overdue,
-        openTasks: openTaskCountsByUser[user.id] || 0,
-      };
-    })
-    .filter((agent) => agent.assigned > 0 || agent.openTasks > 0)
-    .sort((a, b) => b.converted - a.converted || b.assigned - a.assigned);
-
-  const dueToday = leads.filter(
-    (lead) =>
-      isActiveLead(lead) &&
-      lead.nextFollowUpAt !== null &&
-      lead.nextFollowUpAt >= startOfToday &&
-      lead.nextFollowUpAt < startOfTomorrow,
-  ).length;
-  const missingFollowUpDate = leads.filter(
-    (lead) =>
-      followUpRequiredStages.includes(lead.stage) && !lead.nextFollowUpAt,
-  ).length;
-  const untouchedFor48Hours = leads.filter(
-    (lead) =>
-      isActiveLead(lead) &&
-      !lead.lastContactedAt &&
-      lead.createdAt < staleCutoff,
-  ).length;
-
-  const taskCounts = taskStatuses.map((status) => ({
-    status,
-    count: tasks.filter((task) => task.status === status).length,
-  }));
-  const overdueTasks = tasks.filter(
-    (task) =>
-      isOpenTask(task) && task.dueDate !== null && task.dueDate < startOfToday,
-  ).length;
-  const urgentOrHighTasks = tasks.filter(
-    (task) =>
-      isOpenTask(task) && urgentTaskPriorities.includes(task.priority),
-  ).length;
-  const openTasks = tasks.filter(isOpenTask).length;
-
-  const duplicatePhoneMap = leads.reduce<Record<string, number>>((acc, lead) => {
-    const phone = normalizePhone(lead.phone);
-    if (phone.length >= 6) {
-      acc[phone] = (acc[phone] || 0) + 1;
-    }
-
-    return acc;
-  }, {});
-  const duplicateNumbers = Object.values(duplicatePhoneMap).filter(
-    (count) => count > 1,
-  ).length;
-  const duplicateLeadCount = Object.values(duplicatePhoneMap).reduce(
-    (total, count) => total + (count > 1 ? count : 0),
-    0,
-  );
-  const missingPhone = leads.filter((lead) => !normalizePhone(lead.phone)).length;
-  const missingCity = leads.filter((lead) => !lead.city?.trim()).length;
-  const contactedWithoutNotes = leads.filter(
-    (lead) =>
-      followUpRequiredStages.includes(lead.stage) && !lead.notes?.trim(),
-  ).length;
-
-  const trendStart = new Date(startOfToday);
-  trendStart.setDate(trendStart.getDate() - 11);
-  const trendDays = Array.from({ length: 12 }, (_, index) => {
-    const date = new Date(trendStart);
-    date.setDate(trendStart.getDate() + index);
-    const key = buildDayKey(date);
-    const count = leads.filter(
-      (lead) =>
-        lead.createdAt >= date &&
-        lead.createdAt <
-          new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1),
-    ).length;
-
-    return {
-      key,
-      label: date.toLocaleDateString("en-IN", {
-        day: "2-digit",
-        month: "short",
-      }),
-      count,
-    };
-  });
-  const maxTrendCount = Math.max(...trendDays.map((day) => day.count), 0);
-
-  const kpis = [
-    {
-      label: "Total leads",
-      value: formatNumber(totalLeads),
-      detail: `${formatNumber(convertedLeads)} converted`,
-    },
-    {
-      label: "Conversion rate",
-      value: conversionRate,
-      detail: "Converted / all leads",
-    },
-    {
-      label: "Overdue follow-ups",
-      value: formatNumber(overdueFollowUps),
-      detail: "Needs action now",
-    },
-    {
-      label: "Unassigned leads",
-      value: formatNumber(unassignedLeads),
-      detail: "Active leads without owner",
-    },
-    {
-      label: "Open tasks",
-      value: formatNumber(openTasks),
-      detail: `${formatNumber(overdueTasks)} overdue`,
-    },
-    {
-      label: "Sync failures",
-      value: formatNumber(syncFailures),
-      detail: "Google Sheet imports",
-    },
-  ];
+  const respondedLeads = totalCallLeads - (callCounts.NEW ?? 0) - (callCounts.NO_RESPONSE ?? 0);
+  const responseRatePercent = percent(respondedLeads, totalCallLeads);
+  const conversionRatePercent = percent(callCounts.CONVERTED ?? 0, totalCallLeads);
+  const locationSentPercent = percent(data.locationSentCount ?? 0, totalCallLeads);
 
   return (
-    <div className="space-y-8">
-      <section className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
+    <div className="space-y-6 pb-8">
+      {/* Header */}
+      <section className="flex flex-col justify-between gap-4 rounded-xl border border-white/10 bg-gradient-to-br from-white/[0.04] to-transparent p-5 md:flex-row md:items-center">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
-            Analytics
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
-            Real CRM analytics from leads, assignments, follow-ups, tasks, agent
-            activity, and Google Sheet sync status.
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-300">Analytics</p>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight text-white md:text-4xl">Operations analytics</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+            Task load, call lead status, follow-up pressure, user workload — with live charts.
           </p>
         </div>
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-slate-400">
-          Updated from live database records
+        <div className="flex flex-wrap gap-2 shrink-0">
+          {(["today", "3day", "week", "month", "all"] as const).map((r) => (
+            <a key={r} href={r === "all" ? "/admin/analytics" : `/admin/analytics?range=${r}`}
+              className={["h-10 rounded-lg border px-4 text-sm font-semibold leading-10 transition",
+                range === r ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100" : "border-white/10 text-slate-300 hover:bg-white/10"].join(" ")}>
+              {r === "today" ? "Today" : r === "3day" ? "Last 3 days" : r === "week" ? "This week" : r === "month" ? "This month" : "All time"}
+            </a>
+          ))}
         </div>
       </section>
 
-      {error ? (
-        <div className="rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
-          {error}
-        </div>
-      ) : null}
+      {error && <div className="rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">{error}</div>}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-        {kpis.map((metric) => (
-          <div
-            className="rounded-lg border border-white/10 bg-white/[0.03] p-5"
-            key={metric.label}
-          >
-            <p className="text-sm text-slate-400">{metric.label}</p>
-            <p className="mt-3 text-3xl font-bold text-white">
-              {metric.value}
-            </p>
-            <p className="mt-2 text-xs text-cyan-200">{metric.detail}</p>
+      <p className="text-xs text-slate-500">Showing: <span className="font-semibold text-slate-300">{rangeLabel}</span></p>
+
+      {/* KPI Cards */}
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: "Open tasks", value: openTasks, detail: `${data.overdueTasks} overdue`, color: "text-rose-300", glow: "border-rose-300/10" },
+          { label: "Urgent/high tasks", value: urgentTasks, detail: "Priority workload", color: "text-amber-300", glow: "border-amber-300/10" },
+          { label: "Open call leads", value: openCallLeads, detail: `${percent(openCallLeads, totalCallLeads)} of total`, color: "text-cyan-300", glow: "border-cyan-300/10" },
+          { label: "Open follow-ups", value: data.openFollowUps, detail: "Callbacks pending", color: "text-violet-300", glow: "border-violet-300/10" },
+        ].map(({ label, value, detail, color, glow }) => (
+          <div key={label} className={`rounded-xl border ${glow} bg-white/[0.03] p-5 transition hover:bg-white/[0.05]`}>
+            <p className="text-sm text-slate-400">{label}</p>
+            <p className={`mt-3 text-4xl font-black ${color}`}>{formatNumber(value)}</p>
+            <p className="mt-2 text-xs text-slate-500">{detail}</p>
           </div>
         ))}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              1. Lead Pipeline Overview
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">Stage distribution</h2>
-          </div>
-          <div className="mt-5 space-y-3">
-            {stageCounts.map((item) => (
-              <div key={item.stage}>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <span
-                    className={`rounded-lg border px-2 py-1 text-xs font-semibold ${stageTones[item.stage]}`}
-                  >
-                    {label(item.stage)}
-                  </span>
-                  <span className="text-sm font-semibold text-slate-200">
-                    {formatNumber(item.count)}
-                  </span>
+      {/* Charts row 1 */}
+      <section className="grid gap-4 xl:grid-cols-2">
+        <DailyCallsChart data={data.dailyCalls} />
+        <LeadStatusDonut data={donutData} />
+      </section>
+
+      {/* Charts row 2 */}
+      <section className="grid gap-4 xl:grid-cols-2">
+        <WaDailySendsChart data={data.dailyWa} />
+        <TaskCompletionChart data={data.dailyTasks} />
+      </section>
+
+      {/* Status bars */}
+      <section className="grid gap-4 xl:grid-cols-2">
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h2 className="text-base font-semibold text-white">Task breakdown</h2>
+          <div className="mt-4 space-y-4">
+            {taskStatuses.map((s) => {
+              const count = taskCounts[s];
+              return (
+                <div key={s}>
+                  <div className="flex justify-between text-sm"><span className="text-slate-300">{label(s)}</span><span className="font-bold text-white">{formatNumber(count)} — {percent(count, totalTasks)}</span></div>
+                  <div className="mt-2 h-2 rounded-full bg-black/40"><div className="h-full rounded-full bg-cyan-400 transition-all" style={{ width: barWidth(count, totalTasks) }} /></div>
                 </div>
-                <div className="h-2 rounded-full bg-black/40">
-                  <div
-                    className="h-2 rounded-full bg-cyan-300"
-                    style={{ width: barWidth(item.count, maxStageCount) }}
-                  />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
-
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              2. Conversion Funnel
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">
-              New to converted movement
-            </h2>
-          </div>
-          <div className="mt-6 space-y-5">
-            {funnelStages.map((stage, index) => {
-              const count = leads.filter((lead) => lead.stage === stage).length;
-
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h2 className="text-base font-semibold text-white">Call lead breakdown</h2>
+          <div className="mt-4 space-y-4">
+            {callLeadStatuses.map((s) => {
+              const count = callCounts[s];
               return (
-                <div key={stage}>
-                  <div className="mb-2 flex items-center justify-between text-sm">
-                    <span className="font-semibold text-slate-200">
-                      {index + 1}. {label(stage)}
-                    </span>
-                    <span className="text-slate-400">
-                      {formatNumber(count)} - {percent(count, totalLeads)}
-                    </span>
-                  </div>
-                  <div className="h-10 overflow-hidden rounded-lg border border-white/10 bg-black/30">
-                    <div
-                      className="grid h-full place-items-center bg-emerald-300/80 text-xs font-bold text-slate-950"
-                      style={{ width: barWidth(count, totalLeads) }}
-                    >
-                      {count ? percent(count, totalLeads) : ""}
-                    </div>
-                  </div>
+                <div key={s}>
+                  <div className="flex justify-between text-sm"><span className="text-slate-300">{label(s)}</span><span className="font-bold text-white">{formatNumber(count)} — {percent(count, totalCallLeads)}</span></div>
+                  <div className="mt-2 h-2 rounded-full bg-black/40"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: barWidth(count, totalCallLeads) }} /></div>
                 </div>
               );
             })}
@@ -585,328 +327,102 @@ export default async function AdminAnalyticsPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              3. Source Performance
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">
-              Website vs Instagram
-            </h2>
-          </div>
-          <div className="mt-5 grid gap-4">
-            {sourceStats.map((item) => (
-              <div
-                className={`rounded-lg border p-4 ${sourceTones[item.source]}`}
-                key={item.source}
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <h3 className="font-semibold">{sourceLabels[item.source]}</h3>
-                  <span className="text-sm font-bold">
-                    {formatNumber(item.total)} leads
-                  </span>
-                </div>
-                <div className="mt-4 h-2 rounded-full bg-black/40">
-                  <div
-                    className="h-2 rounded-full bg-white/80"
-                    style={{ width: barWidth(item.total, maxSourceTotal) }}
-                  />
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                  <div className="rounded-lg bg-black/25 p-3">
-                    <p className="text-slate-400">Conversion</p>
-                    <p className="mt-1 font-bold text-white">
-                      {item.conversionRate}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-black/25 p-3">
-                    <p className="text-slate-400">Follow-up</p>
-                    <p className="mt-1 font-bold text-white">
-                      {formatNumber(item.followUps)}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-black/25 p-3">
-                    <p className="text-slate-400">No response</p>
-                    <p className="mt-1 font-bold text-white">
-                      {formatNumber(item.noResponse)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              4. Agent Performance
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">
-              Ownership and outcomes
-            </h2>
-          </div>
-          <div className="mt-5 overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                <tr className="border-b border-white/10">
-                  <th className="py-3 pr-4">Agent</th>
-                  <th className="py-3 pr-4">Assigned</th>
-                  <th className="py-3 pr-4">Contacted</th>
-                  <th className="py-3 pr-4">Converted</th>
-                  <th className="py-3 pr-4">Rate</th>
-                  <th className="py-3 pr-4">Overdue</th>
-                  <th className="py-3">Open tasks</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agentRows.length ? (
-                  agentRows.map((agent) => (
-                    <tr className="border-b border-white/5" key={agent.id}>
-                      <td className="py-3 pr-4">
-                        <p className="font-semibold text-white">
-                          {agent.username}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {agent.department}
-                        </p>
-                      </td>
-                      <td className="py-3 pr-4">{agent.assigned}</td>
-                      <td className="py-3 pr-4">{agent.contacted}</td>
-                      <td className="py-3 pr-4">{agent.converted}</td>
-                      <td className="py-3 pr-4 text-cyan-200">
-                        {agent.conversionRate}
-                      </td>
-                      <td className="py-3 pr-4 text-amber-100">
-                        {agent.overdue}
-                      </td>
-                      <td className="py-3">{agent.openTasks}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="py-6 text-center text-slate-500" colSpan={7}>
-                      No assigned leads or open tasks yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              5. Follow-up Health
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">Lead response hygiene</h2>
-          </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {[
-              ["Due today", dueToday, "Follow-ups scheduled for today"],
-              ["Overdue", overdueFollowUps, "Follow-ups already late"],
-              [
-                "Missing date",
-                missingFollowUpDate,
-                "Contacted/interested leads without next date",
-              ],
-              [
-                "Untouched 48h",
-                untouchedFor48Hours,
-                "Active leads with no contact after 48 hours",
-              ],
-            ].map(([title, value, detail]) => (
-              <div
-                className="rounded-lg border border-white/10 bg-black/20 p-4"
-                key={String(title)}
-              >
-                <p className="text-sm text-slate-400">{title}</p>
-                <p className="mt-3 text-3xl font-bold text-white">{value}</p>
-                <p className="mt-2 text-xs text-slate-500">{detail}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              6. Task Analytics
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">Workload status</h2>
-          </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {taskCounts.map((item) => (
-              <div
-                className="rounded-lg border border-white/10 bg-black/20 p-4"
-                key={item.status}
-              >
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                  {label(item.status)}
-                </p>
-                <p className="mt-3 text-2xl font-bold text-white">
-                  {formatNumber(item.count)}
-                </p>
-              </div>
-            ))}
-            <div className="rounded-lg border border-rose-300/20 bg-rose-300/10 p-4">
-              <p className="text-sm text-rose-100">Overdue tasks</p>
-              <p className="mt-3 text-2xl font-bold text-white">
-                {formatNumber(overdueTasks)}
-              </p>
+      {/* Lead Demographics & Performance */}
+      <section className="grid gap-4 xl:grid-cols-2">
+        {/* Lead Performance Rates */}
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+          <h2 className="text-base font-semibold text-white">Lead Performance Metrics</h2>
+          <p className="mt-1 text-xs text-slate-500">Key percentages based on caller outcome tracking</p>
+          <div className="mt-5 grid gap-4 grid-cols-3 text-center">
+            <div className="rounded-lg bg-black/25 p-4 border border-white/5">
+              <p className="text-xs text-slate-400 font-medium">Conversion Rate</p>
+              <p className="mt-2 text-3xl font-black text-emerald-300">{conversionRatePercent}</p>
+              <p className="mt-1 text-[10px] text-slate-500">{formatNumber(callCounts.CONVERTED ?? 0)} converted</p>
             </div>
-            <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-4">
-              <p className="text-sm text-amber-100">High or urgent</p>
-              <p className="mt-3 text-2xl font-bold text-white">
-                {formatNumber(urgentOrHighTasks)}
-              </p>
+            <div className="rounded-lg bg-black/25 p-4 border border-white/5">
+              <p className="text-xs text-slate-400 font-medium">Response Rate</p>
+              <p className="mt-2 text-3xl font-black text-cyan-300">{responseRatePercent}</p>
+              <p className="mt-1 text-[10px] text-slate-500">{formatNumber(respondedLeads)} answered</p>
+            </div>
+            <div className="rounded-lg bg-black/25 p-4 border border-white/5">
+              <p className="text-xs text-slate-400 font-medium">Location Sent</p>
+              <p className="mt-2 text-3xl font-black text-violet-300">{locationSentPercent}</p>
+              <p className="mt-1 text-[10px] text-slate-500">{formatNumber(data.locationSentCount ?? 0)} leads</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Lead Demographics (Top Cities & Property Types) */}
+        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5 flex flex-col justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-white">Top Inquiring Locations & Properties</h2>
+            <p className="mt-1 text-xs text-slate-500">Geographic and property distributions from Google Forms</p>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.1em] text-slate-400 mb-2">Top Cities</p>
+              <div className="space-y-2">
+                {data.topCities.map((c) => (
+                  <div key={c.city || "unknown"} className="flex items-center justify-between text-xs py-1 border-b border-white/5">
+                    <span className="text-slate-300 font-medium truncate max-w-[120px]">{c.city || "Unknown"}</span>
+                    <span className="font-bold text-white bg-white/5 px-2 py-0.5 rounded">{formatNumber(c._count._all)}</span>
+                  </div>
+                ))}
+                {!data.topCities.length && <p className="text-xs text-slate-500 italic">No city records found</p>}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.1em] text-slate-400 mb-2">Property Types</p>
+              <div className="space-y-2">
+                {data.propertyTypes.map((p) => (
+                  <div key={p.ownershipType || "unknown"} className="flex items-center justify-between text-xs py-1 border-b border-white/5">
+                    <span className="text-slate-300 font-medium capitalize truncate max-w-[120px]">{(p.ownershipType || "").toLowerCase()}</span>
+                    <span className="font-bold text-white bg-white/5 px-2 py-0.5 rounded">{formatNumber(p._count._all)}</span>
+                  </div>
+                ))}
+                {!data.propertyTypes.length && <p className="text-xs text-slate-500 italic">No property type records found</p>}
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              7. Google Sheet Sync Health
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">
-              Integration reliability
-            </h2>
-          </div>
-          <div className="mt-5 grid gap-3">
-            {integrations.length ? (
-              integrations.map((integration) => {
-                const isConnected =
-                  integration.status === SheetConnectionStatus.CONNECTED;
-                const isError =
-                  integration.status === SheetConnectionStatus.ERROR;
+      {/* User workload */}
+      <section className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
+        <h2 className="text-base font-semibold text-white">Agent Productivity & Workload</h2>
+        <p className="mt-1 text-xs text-slate-500">Live operational output and call tracker metrics for agents</p>
+        <div className="mt-5 overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="text-xs uppercase tracking-[0.16em] text-slate-500">
+              <tr>
+                {["User", "Role", "Assigned Tasks", "Assigned Leads", "Assigned Follow-ups", "Completed Tasks", "Calls Attended", "Total Talk Time"].map((h) => (
+                  <th key={h} className={`border-b border-white/10 py-3 ${h !== "User" && h !== "Role" ? "text-right px-4" : ""}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/10">
+              {data.users.map((u) => {
+                const completedCount = data.agentCompletedTasks.find((t) => t.assignedToId === u.id)?._count._all ?? 0;
+                const callStat = data.agentCallStats.find((c) => c.assignedToId === u.id);
+                const callsAttended = callStat?._count._all ?? 0;
+                const talkTimeSeconds = callStat?._sum.durationSeconds ?? 0;
 
                 return (
-                  <div
-                    className="rounded-lg border border-white/10 bg-black/20 p-4"
-                    key={integration.source}
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <h3 className="font-semibold text-white">
-                        {sourceLabels[integration.source]}
-                      </h3>
-                      <span
-                        className={`rounded-lg border px-2 py-1 text-xs font-bold ${
-                          isConnected
-                            ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
-                            : isError
-                              ? "border-rose-300/20 bg-rose-300/10 text-rose-100"
-                              : "border-amber-300/20 bg-amber-300/10 text-amber-100"
-                        }`}
-                      >
-                        {label(integration.status)}
-                      </span>
-                    </div>
-                    <div className="mt-4 grid gap-3 text-sm sm:grid-cols-4">
-                      <div>
-                        <p className="text-slate-500">Imported</p>
-                        <p className="font-bold text-emerald-100">
-                          {formatNumber(integration.importedCount)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Failed</p>
-                        <p className="font-bold text-rose-100">
-                          {formatNumber(integration.failedCount)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Last sync</p>
-                        <p className="font-mono text-xs text-slate-300">
-                          {formatDateTime(integration.lastSyncedAt)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500">Last test</p>
-                        <p className="font-mono text-xs text-slate-300">
-                          {formatDateTime(integration.lastTestedAt)}
-                        </p>
-                      </div>
-                    </div>
-                    {integration.lastError ? (
-                      <p className="mt-3 rounded-lg border border-rose-300/20 bg-rose-300/10 p-3 text-xs text-rose-100">
-                        {integration.lastError}
-                      </p>
-                    ) : null}
-                  </div>
+                  <tr key={u.id} className="transition hover:bg-white/[0.02]">
+                    <td className="py-3 font-semibold text-white">{u.username}</td>
+                    <td className="py-3 text-slate-400">{label(u.role)}</td>
+                    <td className="py-3 text-right text-slate-200 px-4">{u._count.assignedTasks}</td>
+                    <td className="py-3 text-right text-slate-200 px-4">{u._count.callLeads}</td>
+                    <td className="py-3 text-right text-slate-200 px-4">{u._count.callFollowUps}</td>
+                    <td className="py-3 text-right text-emerald-300 font-bold px-4">{formatNumber(completedCount)}</td>
+                    <td className="py-3 text-right text-cyan-300 font-bold px-4">{formatNumber(callsAttended)}</td>
+                    <td className="py-3 text-right text-violet-300 font-bold px-4">{formatDuration(talkTimeSeconds)}</td>
+                  </tr>
                 );
-              })
-            ) : (
-              <div className="rounded-lg border border-dashed border-white/10 p-6 text-center text-sm text-slate-500">
-                No Google Sheet integrations configured.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-              8. Data Quality Panel
-            </p>
-            <h2 className="mt-2 text-lg font-semibold">Fix dirty CRM data</h2>
-          </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {[
-              ["Missing phone", missingPhone, "Cannot call or WhatsApp"],
-              ["Missing city", missingCity, "Weak routing and filtering"],
-              ["Unassigned active", unassignedLeads, "No owner responsible"],
-              [
-                "Duplicate phones",
-                duplicateLeadCount,
-                `${duplicateNumbers} repeated phone numbers`,
-              ],
-              [
-                "No notes after contact",
-                contactedWithoutNotes,
-                "Poor handoff context",
-              ],
-            ].map(([title, value, detail]) => (
-              <div
-                className="rounded-lg border border-white/10 bg-black/20 p-4"
-                key={String(title)}
-              >
-                <p className="text-sm text-slate-400">{title}</p>
-                <p className="mt-3 text-2xl font-bold text-white">{value}</p>
-                <p className="mt-2 text-xs text-slate-500">{detail}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200">
-            Lead Capture Trend
-          </p>
-          <h2 className="mt-2 text-lg font-semibold">Last 12 days</h2>
-        </div>
-        <div className="mt-8 flex h-64 items-end gap-3">
-          {trendDays.map((day) => (
-            <div className="flex flex-1 flex-col items-center gap-3" key={day.key}>
-              <div
-                className="grid w-full place-items-end rounded-t-lg bg-cyan-300/80 px-1 pb-2 text-[10px] font-bold text-slate-950"
-                style={{ height: barWidth(day.count, maxTrendCount) }}
-              >
-                {day.count || ""}
-              </div>
-              <span className="text-center text-[10px] text-slate-500">
-                {day.label}
-              </span>
-            </div>
-          ))}
+              })}
+              {!data.users.length && <tr><td colSpan={8} className="py-6 text-slate-500">No users found.</td></tr>}
+            </tbody>
+          </table>
         </div>
       </section>
     </div>

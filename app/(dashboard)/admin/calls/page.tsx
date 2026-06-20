@@ -38,6 +38,18 @@ export default async function AdminCallCenterPage() {
     newLeadsToday,
     overdueMissedSessions,
     agents,
+    ownedLeadsGroup,
+    openLeadsGroup,
+    claimedTodayGroup,
+    sheetSavedTodayGroup,
+    followUpsGroup,
+    outcomesTodayGroup,
+    detailUpdatesTodayGroup,
+    workflowUpdatesTodayGroup,
+    outgoingCallsTodayGroup,
+    liveSessionsGroup,
+    missedSessionsGroup,
+    allRecentWork,
   ] =
     await Promise.all([
       db.callSession.count({ where: { firstRingAt: { gte: today } } }),
@@ -104,96 +116,157 @@ export default async function AdminCallCenterPage() {
         orderBy: { username: "asc" },
         select: { id: true, username: true, email: true },
       }),
+      // Grouped queries
+      db.callLead.groupBy({
+        by: ["assignedToId"],
+        _count: { _all: true },
+      }),
+      db.callLead.groupBy({
+        by: ["assignedToId"],
+        where: { status: { in: [...actionableLeadStatuses] } },
+        _count: { _all: true },
+      }),
+      db.callActivity.groupBy({
+        by: ["userId"],
+        where: {
+          actionType: "ASSIGNMENT_CHANGE",
+          description: { contains: "claimed" },
+          createdAt: { gte: today },
+        },
+        _count: { _all: true },
+      }),
+      db.callLead.groupBy({
+        by: ["assignedToId"],
+        where: { sheetSyncedAt: { gte: today } },
+        _count: { _all: true },
+      }),
+      db.callFollowUp.groupBy({
+        by: ["assignedToId"],
+        where: { completedAt: null },
+        _count: { _all: true },
+      }),
+      db.callLead.groupBy({
+        by: ["assignedToId"],
+        where: { status: { in: [...outcomeStatuses] }, updatedAt: { gte: today } },
+        _count: { _all: true },
+      }),
+      db.callActivity.groupBy({
+        by: ["userId"],
+        where: {
+          actionType: "NOTE_ADDED",
+          description: "Call lead customer details updated",
+          createdAt: { gte: today },
+        },
+        _count: { _all: true },
+      }),
+      db.callActivity.groupBy({
+        by: ["userId"],
+        where: {
+          OR: [
+            { actionType: "FOLLOW_UP_UPDATE" },
+            { actionType: "NOTE_ADDED", description: { startsWith: "Call lead status updated" } },
+          ],
+          createdAt: { gte: today },
+        },
+        _count: { _all: true },
+      }),
+      db.callSession.findMany({
+        where: {
+          firstRingAt: { gte: today },
+          callDirection: "OUTGOING",
+        },
+        select: {
+          assignedToId: true,
+          lead: { select: { assignedToId: true } },
+          status: true,
+        },
+      }),
+      db.callSession.findMany({
+        where: {
+          status: { in: ["RINGING", "ANSWERED"] },
+          endedAt: null,
+        },
+        select: {
+          assignedToId: true,
+          lead: { select: { assignedToId: true } },
+        },
+      }),
+      db.callSession.findMany({
+        where: {
+          status: "MISSED",
+        },
+        select: {
+          assignedToId: true,
+          lead: { select: { assignedToId: true } },
+        },
+      }),
+      db.callActivity.findMany({
+        where: {
+          actionType: { in: ["ASSIGNMENT_CHANGE", "FOLLOW_UP_UPDATE", "NOTE_ADDED"] },
+          NOT: { description: { startsWith: "Saved in CRM only" } },
+          createdAt: { gte: today },
+        },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          actionType: true,
+          description: true,
+          createdAt: true,
+          userId: true,
+          lead: { select: { displayName: true, phone: true } },
+        },
+      }),
     ]);
+
+  // Helpers to fetch grouped counts
+  const getGroupCount = (group: { assignedToId: string | null; _count: { _all: number } }[], agentId: string) => {
+    return group.find((g) => g.assignedToId === agentId)?._count._all ?? 0;
+  };
+  const getUserGroupCount = (group: { userId: string | null; _count: { _all: number } }[], agentId: string) => {
+    return group.find((g) => g.userId === agentId)?._count._all ?? 0;
+  };
+
+  // Memory filtering functions for callSessions matching assignedFilter
+  const matchesAssignedFilter = (session: { assignedToId: string | null; lead: { assignedToId: string | null } | null }, agentId: string) => {
+    return session.assignedToId === agentId || session.lead?.assignedToId === agentId;
+  };
 
   const agentRows = await Promise.all(
     agents.map(async (agent) => {
-      const assignedFilter = {
-        OR: [
-          { assignedToId: agent.id },
-          { lead: { assignedToId: agent.id } },
-        ],
-      };
+      const ownedLeads = getGroupCount(ownedLeadsGroup as any, agent.id);
+      const openLeads = getGroupCount(openLeadsGroup as any, agent.id);
+      const claimedToday = getUserGroupCount(claimedTodayGroup as any, agent.id);
+      const sheetSavedToday = getGroupCount(sheetSavedTodayGroup as any, agent.id);
+      const followUps = getGroupCount(followUpsGroup as any, agent.id);
+      const outcomesToday = getGroupCount(outcomesTodayGroup as any, agent.id);
+      const detailUpdatesToday = getUserGroupCount(detailUpdatesTodayGroup as any, agent.id);
+      const workflowUpdatesToday = getUserGroupCount(workflowUpdatesTodayGroup as any, agent.id);
 
-      const [
-        ownedLeads,
-        openLeads,
-        claimedToday,
-        sheetSavedToday,
-        outgoingCallsToday,
-        live,
-        missed,
-        completed,
-        followUps,
-        outcomesToday,
-        detailUpdatesToday,
-        workflowUpdatesToday,
-        recentWork,
-        lastSession,
-      ] = await Promise.all([
-        db.callLead.count({ where: { assignedToId: agent.id } }),
-        db.callLead.count({ where: { assignedToId: agent.id, status: { in: [...actionableLeadStatuses] } } }),
-        db.callActivity.count({
-          where: {
-            userId: agent.id,
-            actionType: "ASSIGNMENT_CHANGE",
-            description: { contains: "claimed" },
-            createdAt: { gte: today },
-          },
-        }),
-        db.callLead.count({ where: { assignedToId: agent.id, sheetSyncedAt: { gte: today } } }),
-        db.callSession.count({ where: { firstRingAt: { gte: today }, callDirection: "OUTGOING", ...assignedFilter } }),
-        db.callSession.count({ where: { status: { in: ["RINGING", "ANSWERED"] }, endedAt: null, ...assignedFilter } }),
-        db.callSession.count({ where: { status: "MISSED", ...assignedFilter } }),
-        db.callSession.count({ where: { status: "COMPLETED", callDirection: "OUTGOING", ...assignedFilter } }),
-        db.callFollowUp.count({ where: { assignedToId: agent.id, completedAt: null } }),
-        db.callLead.count({ where: { assignedToId: agent.id, status: { in: [...outcomeStatuses] }, updatedAt: { gte: today } } }),
-        db.callActivity.count({
-          where: {
-            userId: agent.id,
-            actionType: "NOTE_ADDED",
-            description: "Call lead customer details updated",
-            createdAt: { gte: today },
-          },
-        }),
-        db.callActivity.count({
-          where: {
-            userId: agent.id,
-            OR: [
-              { actionType: "FOLLOW_UP_UPDATE" },
-              { actionType: "NOTE_ADDED", description: { startsWith: "Call lead status updated" } },
-            ],
-            createdAt: { gte: today },
-          },
-        }),
-        db.callActivity.findMany({
-          where: {
-            userId: agent.id,
-            actionType: { in: ["ASSIGNMENT_CHANGE", "FOLLOW_UP_UPDATE", "NOTE_ADDED"] },
-            NOT: { description: { startsWith: "Saved in CRM only" } },
-            createdAt: { gte: today },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 5,
-          select: {
-            id: true,
-            actionType: true,
-            description: true,
-            createdAt: true,
-            lead: { select: { displayName: true, phone: true } },
-          },
-        }),
-        db.callSession.findFirst({
-          where: assignedFilter,
-          orderBy: { firstRingAt: "desc" },
-          select: {
-            firstRingAt: true,
-            status: true,
-            durationSeconds: true,
-            lead: { select: { displayName: true, phone: true } },
-          },
-        }),
-      ]);
+      // In-memory calculations for session counts
+      const outgoingCallsToday = outgoingCallsTodayGroup.filter((s: any) => matchesAssignedFilter(s, agent.id)).length;
+      const completed = outgoingCallsTodayGroup.filter((s: any) => matchesAssignedFilter(s, agent.id) && s.status === "COMPLETED").length;
+      const live = liveSessionsGroup.filter((s: any) => matchesAssignedFilter(s, agent.id)).length;
+      const missed = missedSessionsGroup.filter((s: any) => matchesAssignedFilter(s, agent.id)).length;
+
+      // Filter recent work for this agent
+      const recentWork = allRecentWork.filter((w: any) => w.userId === agent.id).slice(0, 5);
+
+      // Fetch last session (this is a fast select)
+      const lastSession = await db.callSession.findFirst({
+        where: {
+          OR: [
+            { assignedToId: agent.id },
+            { lead: { assignedToId: agent.id } },
+          ],
+        },
+        orderBy: { firstRingAt: "desc" },
+        select: {
+          firstRingAt: true,
+          status: true,
+          durationSeconds: true,
+          lead: { select: { displayName: true, phone: true } },
+        },
+      });
 
       return {
         ...agent,
@@ -436,7 +509,7 @@ export default async function AdminCallCenterPage() {
                       <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
                         <h3 className="text-xs font-black uppercase tracking-[0.14em] text-cyan-100">Recent user activity</h3>
                         <div className="mt-3 space-y-3">
-                          {agent.recentWork.map((activity) => (
+                          {agent.recentWork.map((activity: any) => (
                             <div className="text-xs" key={activity.id}>
                               <p className="font-bold text-white">{activity.lead.displayName}</p>
                               <p className="mt-1 text-slate-500">{activity.description}</p>

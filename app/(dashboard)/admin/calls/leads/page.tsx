@@ -44,102 +44,66 @@ export default async function AdminCallLeadsPage({ searchParams }: AdminCallLead
     }),
   ]);
   const leadIds = leads.map((lead) => lead.id);
-  const [incomingCounts, outgoingCounts, outgoingSessions, durationSessions] = leadIds.length
-    ? await Promise.all([
-        db.callSession.groupBy({
-          by: ["leadId"],
-          where: {
-            leadId: { in: leadIds },
-            callDirection: "INCOMING",
-          },
-          _count: { _all: true },
-        }),
-        db.callSession.groupBy({
-          by: ["leadId"],
-          where: {
-            leadId: { in: leadIds },
-            callDirection: "OUTGOING",
-          },
-          _count: { _all: true },
-        }),
-        db.callSession.findMany({
-          where: {
-            leadId: { in: leadIds },
-            callDirection: "OUTGOING",
-          },
-          include: {
-            companyPhone: {
-              select: { label: true, phoneNumber: true },
-            },
-          },
-          orderBy: { firstRingAt: "desc" },
-        }),
-        db.callSession.findMany({
-          where: {
-            leadId: { in: leadIds },
-            durationSeconds: { not: null },
-          },
-          include: {
-            companyPhone: {
-              select: { label: true, phoneNumber: true },
-            },
-          },
-          orderBy: { firstRingAt: "desc" },
-        }),
-      ])
-    : [[], [], [], []];
-  const incomingCountByLeadId = new Map(
-    incomingCounts.map((count) => [count.leadId, count._count._all]),
-  );
-  const outgoingCountByLeadId = new Map(
-    outgoingCounts.map((count) => [count.leadId, count._count._all]),
-  );
-  const latestOutgoingSessionByLeadId = new Map<string, (typeof outgoingSessions)[number]>();
-  const latestDurationSessionByLeadId = new Map<string, (typeof durationSessions)[number]>();
+  // Combine incoming/outgoing counts into a single groupBy query
+  const sessionDirectionCounts = leadIds.length
+    ? await db.callSession.groupBy({
+        by: ["leadId", "callDirection"],
+        where: {
+          leadId: { in: leadIds },
+          callDirection: { in: ["INCOMING", "OUTGOING"] },
+        },
+        _count: { _all: true },
+      })
+    : [];
 
-  for (const session of outgoingSessions) {
-    if (!latestOutgoingSessionByLeadId.has(session.leadId)) {
-      latestOutgoingSessionByLeadId.set(session.leadId, session);
+  const incomingCountByLeadId = new Map<string, number>();
+  const outgoingCountByLeadId = new Map<string, number>();
+
+  for (const item of sessionDirectionCounts) {
+    if (item.callDirection === "INCOMING") {
+      incomingCountByLeadId.set(item.leadId, item._count._all);
+    } else if (item.callDirection === "OUTGOING") {
+      outgoingCountByLeadId.set(item.leadId, item._count._all);
     }
   }
 
-  for (const session of durationSessions) {
-    if (!latestDurationSessionByLeadId.has(session.leadId)) {
-      latestDurationSessionByLeadId.set(session.leadId, session);
-    }
-  }
+  const rows: CallLeadRow[] = leads.map((lead) => {
+    // Find the latest outgoing session and latest duration session from pre-fetched relation
+    const latestOutgoingSession = lead.sessions.find((s) => s.callDirection === "OUTGOING") ?? null;
+    const latestDurationSession = lead.sessions.find((s) => s.durationSeconds !== null) ?? null;
 
-  const rows: CallLeadRow[] = leads.map((lead) => ({
-    id: lead.id,
-    phone: lead.phone,
-    displayName: lead.displayName,
-    email: lead.email,
-    city: lead.city,
-    address: lead.address,
-    ownershipType: lead.ownershipType,
-    language: lead.language,
-    message: lead.message,
-    status: lead.status,
-    assignedToId: lead.assignedToId,
-    lastCompanyPhone: lead.lastCompanyPhone,
-    lastContactedAt: lead.lastContactedAt,
-    nextFollowUpAt: lead.nextFollowUpAt,
-    notes: lead.notes,
-    isImportant: lead.isImportant,
-    locationSent: lead.locationSent,
-    instagramLeadId: lead.instagramLeadId,
-    sheetSyncedAt: lead.sheetSyncedAt,
-    sheetSyncWarning: lead.sheetSyncWarning,
-    updatedAt: lead.updatedAt,
-    assignedTo: lead.assignedTo,
-    sessions: lead.sessions,
-    incomingCallCount: incomingCountByLeadId.get(lead.id) || 0,
-    latestOutgoingSession: latestOutgoingSessionByLeadId.get(lead.id) || null,
-    latestDurationSession: latestDurationSessionByLeadId.get(lead.id) || null,
-    outgoingCallCount: outgoingCountByLeadId.get(lead.id) || 0,
-    activities: lead.activities,
-    _count: lead._count,
-  }));
+    return {
+      id: lead.id,
+      phone: lead.phone,
+      displayName: lead.displayName,
+      email: lead.email,
+      city: lead.city,
+      address: lead.address,
+      ownershipType: lead.ownershipType,
+      language: lead.language,
+      message: lead.message,
+      status: lead.status,
+      assignedToId: lead.assignedToId,
+      lastCompanyPhone: lead.lastCompanyPhone,
+      lastContactedAt: lead.lastContactedAt,
+      nextFollowUpAt: lead.nextFollowUpAt,
+      notes: lead.notes,
+      isImportant: lead.isImportant,
+      locationSent: lead.locationSent,
+      instagramLeadId: lead.instagramLeadId,
+      sheetSyncedAt: lead.sheetSyncedAt,
+      sheetSyncWarning: lead.sheetSyncWarning,
+      updatedAt: lead.updatedAt,
+      assignedTo: lead.assignedTo,
+      sessions: lead.sessions,
+      incomingCallCount: incomingCountByLeadId.get(lead.id) || 0,
+      latestOutgoingSession,
+      latestDurationSession,
+      outgoingCallCount: outgoingCountByLeadId.get(lead.id) || 0,
+      activities: lead.activities,
+      _count: lead._count,
+    };
+  });
 
   return <CallLeadsPage agents={agents} initialAgentId={params.agent || "ALL"} leads={rows} />;
 }

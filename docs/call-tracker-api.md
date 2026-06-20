@@ -123,6 +123,11 @@ ENDED
 MISSED
 ```
 
+For backward compatibility, the CRM also accepts `eventType: "OUTGOING"` from
+Android. It is normalized to `eventType: "ANSWERED"` with
+`callDirection: "OUTGOING"`. New Android builds should still send `OUTGOING`
+as `callDirection`, not as the event type.
+
 Supported `callDirection` values:
 
 ```text

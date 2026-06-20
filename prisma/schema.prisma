@@ -99,6 +99,25 @@ enum CallActivityType {
   FOLLOW_UP_UPDATE
 }
 
+enum WhatsAppConnectionStatus {
+  DISCONNECTED
+  QR_REQUIRED
+  CONNECTING
+  CONNECTED
+  ERROR
+  PAUSED
+}
+
+enum WhatsAppLeadStatus {
+  NEW
+  OPTED_IN
+  QUEUED
+  SENT
+  FAILED
+  REPLIED
+  DO_NOT_CONTACT
+}
+
 model User {
   id           String @id @default(cuid())
   username     String @map("name")
@@ -479,4 +498,67 @@ model CallFollowUp {
   @@index([assignedToId, completedAt])
   @@index([dueAt])
   @@index([completedAt])
+}
+
+model WhatsAppAccount {
+  id              String                   @id @default(cuid())
+  label           String                   @default("Primary WhatsApp")
+  phoneNumber     String?                  @map("phone_number")
+  status          WhatsAppConnectionStatus @default(DISCONNECTED)
+  qrCodeData      String?                  @map("qr_code_data") @db.Text
+  minDelaySeconds Int                      @default(45) @map("min_delay_seconds")
+  maxDelaySeconds Int                      @default(120) @map("max_delay_seconds")
+  dailySendLimit  Int                      @default(100) @map("daily_send_limit")
+  requireOptIn    Boolean                  @default(true) @map("require_opt_in")
+  quietHoursStart String                   @default("21:00") @map("quiet_hours_start")
+  quietHoursEnd   String                   @default("09:00") @map("quiet_hours_end")
+  messageVariants      String?                  @map("message_variants") @db.Text
+  autoReplyEnabled     Boolean                  @default(true)  @map("auto_reply_enabled")
+  consecutiveFailures  Int                      @default(0)     @map("consecutive_failures")
+  autoPauseThreshold   Int                      @default(3)     @map("auto_pause_threshold")
+  contactCooldownDays  Int                      @default(7)     @map("contact_cooldown_days")
+  hourlySendLimit      Int                      @default(10)    @map("hourly_send_limit")
+  warmupEnabled        Boolean                  @default(false) @map("warmup_enabled")
+  warmupStartDate      DateTime?                @map("warmup_start_date")
+  warmupRampPerDay     Int                      @default(5)     @map("warmup_ramp_per_day")
+  lastConnectedAt      DateTime?                @map("last_connected_at")
+  lastError       String?                  @map("last_error") @db.Text
+  leads           WhatsAppLead[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+}
+
+model WhatsAppLead {
+  id          String             @id @default(cuid())
+  accountId   String?            @map("account_id")
+  account     WhatsAppAccount?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  phone       String
+  displayName String             @map("display_name")
+  message     String?            @db.Text
+  status      WhatsAppLeadStatus @default(NEW)
+  consentAt        DateTime?          @map("consent_at")
+  lastSentAt       DateTime?          @map("last_sent_at")
+  lastError        String?            @map("last_error") @db.Text
+  lastReplyAt      DateTime?          @map("last_reply_at")
+  lastReplySnippet String?            @map("last_reply_snippet") @db.Text
+
+  formToken        String?            @unique @default(uuid()) @map("form_token")
+  formSubmittedAt  DateTime?          @map("form_submitted_at")
+  formName         String?            @map("form_name")
+  formCity         String?            @map("form_city")
+  formPropertyType String?            @map("form_property_type")
+  formMapsLocation String?            @map("form_maps_location") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([accountId])
+  @@index([status])
+  @@index([phone])
+  @@index([createdAt])
+  @@index([lastSentAt])
+  @@index([lastReplyAt])
 }

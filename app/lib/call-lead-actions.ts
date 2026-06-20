@@ -5,6 +5,7 @@ import { db } from "./db";
 import { requireRole, requireUser } from "./session";
 import type { CallLeadStatus } from "@prisma/client";
 import { LeadSource } from "./prisma-enums";
+import { autoQueueWhatsAppForCaller } from "./whatsapp-auto-queue";
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
@@ -172,7 +173,6 @@ function revalidateCallViews() {
   revalidatePath("/admin/calls/leads");
   revalidatePath("/admin/calls/missed");
   revalidatePath("/admin/calls/live");
-  revalidatePath("/admin/leads");
 }
 
 export async function adminDeleteCallLeadsAction(leadIds: string[]) {
@@ -417,7 +417,37 @@ export async function createManualCallLeadAction(data: {
       },
     });
 
+    if (!existingLead) {
+      let companyPhone = await db.companyPhone.findFirst();
+      if (!companyPhone) {
+        companyPhone = await db.companyPhone.create({
+          data: {
+            phoneNumber: "MANUAL",
+            label: "Manual Entry Phone",
+            deviceId: "MANUAL_DEVICE",
+            authTokenHash: "MANUAL",
+          },
+        });
+      }
+
+      await db.callSession.create({
+        data: {
+          leadId: lead.id,
+          companyPhoneId: companyPhone.id,
+          callerNumber: lead.phone,
+          callDirection: "INCOMING",
+          status: "COMPLETED",
+          firstRingAt: new Date(),
+          durationSeconds: 0,
+        },
+      });
+    }
+
+    // Auto-queue WhatsApp message for this lead
+    await autoQueueWhatsAppForCaller(lead.phone, displayName, "MISSED");
+
     revalidateCallViews();
+    revalidatePath("/admin/whatsapp/leads");
     return { success: true, leadId: lead.id, updated: Boolean(existingLead) };
   } catch (error) {
     console.error("Error creating manual call lead:", error);
@@ -661,3 +691,81 @@ export async function saveCallLeadToSheetAction(leadId: string) {
     return { error: getErrorMessage(error, "Saving call lead to sheet failed.") };
   }
 }
+
+export async function syncCallLeadToSheetBackground(leadId: string) {
+  try {
+    const callLead = await db.callLead.findUnique({
+      where: { id: leadId },
+      include: {
+        assignedTo: { select: { username: true } },
+        sessions: {
+          where: { durationSeconds: { not: null } },
+          orderBy: { firstRingAt: "desc" },
+          take: 1,
+        },
+      },
+    });
+
+    if (!callLead) {
+      console.log(`[sheet-sync-bg] Call lead ${leadId} not found.`);
+      return;
+    }
+
+    if (!hasSheetReadyCallLeadDetails(callLead)) {
+      console.log(`[sheet-sync-bg] Call lead ${leadId} details not sheet-ready yet.`);
+      return;
+    }
+
+    const [incomingCount, outgoingCount] = await Promise.all([
+      db.callSession.count({ where: { leadId: callLead.id, callDirection: "INCOMING" } }),
+      db.callSession.count({ where: { leadId: callLead.id, callDirection: "OUTGOING" } }),
+    ]);
+    const latestDurationSession = callLead.sessions[0] || null;
+
+    const warning = await syncCallLeadBackToSheet({
+      id: callLead.id,
+      name: callLead.displayName,
+      email: callLead.email,
+      phone: callLead.phone,
+      city: callLead.city,
+      language: callLead.language,
+      address: callLead.address,
+      ownershipType: callLead.ownershipType,
+      locationSent: callLead.locationSent,
+      stage: callLead.status,
+      assignedAgent: callLead.assignedTo?.username || null,
+      requirement: callLead.message,
+      notes: callLead.notes,
+      nextFollowUpAt: callLead.nextFollowUpAt,
+      lastContactedAt: callLead.lastContactedAt,
+      incomingCallCount: incomingCount,
+      outgoingCallCount: outgoingCount,
+      lastCallDirection: latestDurationSession?.callDirection || null,
+      lastCallDurationSeconds: latestDurationSession?.durationSeconds || null,
+      updatedAt: callLead.updatedAt,
+    });
+
+    await db.callLead.update({
+      where: { id: callLead.id },
+      data: {
+        sheetSyncedAt: warning ? null : new Date(),
+        sheetSyncWarning: warning,
+      },
+    });
+
+    await db.callActivity.create({
+      data: {
+        leadId: callLead.id,
+        actionType: "NOTE_ADDED",
+        description: warning
+          ? `System auto-sync to sheet warning: ${warning}`
+          : "System auto-synced lead to Call Leads sheet",
+      },
+    });
+
+    revalidateCallViews();
+  } catch (error) {
+    console.error("[sheet-sync-bg] Background sheet sync failed:", error);
+  }
+}
+

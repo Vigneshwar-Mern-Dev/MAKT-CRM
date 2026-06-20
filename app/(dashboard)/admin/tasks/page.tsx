@@ -95,7 +95,7 @@ async function getTaskData(status?: string, userId?: string) {
           assignedBy: { select: { username: true } },
           comments: {
             orderBy: { createdAt: "desc" },
-            take: 3,
+            take: 10,
             include: { author: { select: { username: true } } },
           },
         },
@@ -392,6 +392,9 @@ export default async function AdminTasksPage({
                       <button
                         className="h-10 rounded-lg border border-rose-300/20 px-3 text-sm font-semibold text-rose-100 hover:bg-rose-300/10"
                         type="submit"
+                        onClick={(e) => {
+                          if (!confirm(`Delete task "${task.title}"? This cannot be undone.`)) e.preventDefault();
+                        }}
                       >
                         Delete
                       </button>

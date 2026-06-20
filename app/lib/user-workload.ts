@@ -1,7 +1,7 @@
 import { cache } from "react";
 import type { TaskStatus as TaskStatusType } from "@/app/lib/prisma-enums";
 import { db } from "@/app/lib/db";
-import { CallLeadStatus, LeadStage, TaskStatus } from "@/app/lib/prisma-enums";
+import { CallLeadStatus, TaskStatus } from "@/app/lib/prisma-enums";
 
 export type UserWorkloadSummary = {
   totalTasks: number;
@@ -11,7 +11,6 @@ export type UserWorkloadSummary = {
   openTasks: number;
   overdueTasks: number;
   totalFollowups: number;
-  leadFollowups: number;
   callFollowups: number;
   callOpenLeads: number;
 };
@@ -24,7 +23,6 @@ const emptyWorkload: UserWorkloadSummary = {
   openTasks: 0,
   overdueTasks: 0,
   totalFollowups: 0,
-  leadFollowups: 0,
   callFollowups: 0,
   callOpenLeads: 0,
 };
@@ -34,8 +32,6 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
     const [
       taskStatusCounts,
       overdueTasks,
-      websiteFollowups,
-      instagramFollowups,
       callFollowups,
       callOpenLeads,
     ] = await Promise.all([
@@ -50,12 +46,6 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
           dueDate: { lt: new Date() },
           status: { notIn: [TaskStatus.COMPLETED, TaskStatus.CANCELLED] },
         },
-      }),
-      db.websiteLead.count({
-        where: { assignedToId: userId, stage: LeadStage.FOLLOW_UP },
-      }),
-      db.instagramLead.count({
-        where: { assignedToId: userId, stage: LeadStage.FOLLOW_UP },
       }),
       db.callFollowUp.count({
         where: { assignedToId: userId, completedAt: null },
@@ -90,8 +80,6 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
     const openTasks =
       taskCounts.PENDING + taskCounts.IN_PROGRESS;
 
-    const leadFollowups = websiteFollowups + instagramFollowups;
-
     return {
       data: {
         totalTasks:
@@ -104,8 +92,7 @@ export const getUserWorkloadSummary = cache(async (userId: string) => {
         completedTasks: taskCounts.COMPLETED,
         openTasks,
         overdueTasks,
-        totalFollowups: leadFollowups + callFollowups,
-        leadFollowups,
+        totalFollowups: callFollowups,
         callFollowups,
         callOpenLeads,
       },

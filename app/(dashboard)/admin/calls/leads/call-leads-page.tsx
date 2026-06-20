@@ -618,10 +618,29 @@ export function CallLeadsPage({
                         </button>
                       )}
                     </div>
-                    <p className="mt-1 truncate text-xs text-slate-400">{lead.phone}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="truncate text-xs text-slate-400">{lead.phone}</p>
+                      {lead.lastCompanyPhone && (
+                        <span className="inline-flex items-center rounded-md bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-slate-300 border border-slate-700" title={`Received on ${lead.lastCompanyPhone}`}>
+                          via {lead.lastCompanyPhone.slice(-4)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="min-w-0 text-xs">
-                    <p className="truncate text-slate-400" title={lead.address || ""}>{lead.address || "--"}</p>
+                    {lead.address && (lead.address.startsWith("http://") || lead.address.startsWith("https://")) ? (
+                      <a
+                        href={lead.address}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-400 hover:text-cyan-300 hover:underline font-semibold"
+                        title={lead.address}
+                      >
+                        📍 Open Map
+                      </a>
+                    ) : (
+                      <p className="truncate text-slate-400" title={lead.address || ""}>{lead.address || "--"}</p>
+                    )}
                     <p className="mt-1 truncate text-[11px] text-slate-500">{lead.city || "--"}</p>
                   </div>
                   <div className="min-w-0 text-xs">

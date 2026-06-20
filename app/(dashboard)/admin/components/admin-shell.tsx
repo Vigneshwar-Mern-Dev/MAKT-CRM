@@ -67,22 +67,6 @@ const navItems: NavItem[] = [
     ),
   },
   {
-    href: "/admin/leads",
-    label: "Lead Center",
-    icon: (
-      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none">
-        <path d="M4 5h16M4 12h10M4 19h7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="m17 14 3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-    children: [
-      { href: "/admin/leads", label: "All Leads" },
-      { href: "/admin/leads/new", label: "New Leads" },
-      { href: "/admin/leads/assigned", label: "Assigned Leads" },
-      { href: "/admin/leads/follow-ups", label: "Follow-ups" },
-    ],
-  },
-  {
     href: "/admin/calls",
     label: "Call Center",
     icon: (
@@ -99,6 +83,32 @@ const navItems: NavItem[] = [
     ],
   },
   {
+    href: "/admin/whatsapp",
+    label: "WhatsApp",
+    icon: (
+      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+        <path d="M5.5 19.2 6.4 16A7.6 7.6 0 1 1 9 18.1l-3.5 1.1Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+        <path d="M9.7 8.8c.2-.4.4-.4.7-.4h.5c.2 0 .4 0 .5.4l.5 1.2c.1.3.1.5-.1.7l-.4.5c.6 1 1.4 1.7 2.5 2.2l.5-.5c.2-.2.4-.3.7-.1l1.2.6c.4.2.4.4.4.7v.4c0 .3-.2.6-.5.7-.6.3-1.5.3-2.7-.2-2.5-1-4.2-2.8-5-5.2-.3-.9-.2-1.6.1-2Z" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
+      </svg>
+    ),
+    children: [
+      { href: "/admin/whatsapp", label: "Overview" },
+      { href: "/admin/whatsapp/leads", label: "Leads" },
+      { href: "/admin/whatsapp/settings", label: "Settings" },
+    ],
+  },
+  {
+    href: "/admin/audit",
+    label: "Audit Log",
+    icon: (
+      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2Z" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     href: "/admin/settings",
     label: "Settings",
     icon: (
@@ -113,8 +123,8 @@ const navItems: NavItem[] = [
 export function AdminShell({ children, user }: AdminShellProps) {
   const pathname = usePathname();
   const initials = user.username.slice(0, 2).toUpperCase() || "AD";
-  const leadCenter = navItems.find((item) => item.href === "/admin/leads");
   const callCenter = navItems.find((item) => item.href === "/admin/calls");
+  const whatsAppCenter = navItems.find((item) => item.href === "/admin/whatsapp");
 
   return (
     <main className="h-screen overflow-hidden bg-[#07090d] text-white">
@@ -258,9 +268,9 @@ export function AdminShell({ children, user }: AdminShellProps) {
               })}
             </nav>
 
-            {pathname.startsWith("/admin/leads") ? (
+            {pathname.startsWith("/admin/calls") ? (
               <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">
-                {leadCenter?.children?.map((child) => (
+                {callCenter?.children?.map((child) => (
                     <Link
                       className={[
                         "h-9 shrink-0 rounded-lg px-3 text-sm font-medium leading-9",
@@ -277,9 +287,9 @@ export function AdminShell({ children, user }: AdminShellProps) {
               </nav>
             ) : null}
 
-            {pathname.startsWith("/admin/calls") ? (
+            {pathname.startsWith("/admin/whatsapp") ? (
               <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">
-                {callCenter?.children?.map((child) => (
+                {whatsAppCenter?.children?.map((child) => (
                     <Link
                       className={[
                         "h-9 shrink-0 rounded-lg px-3 text-sm font-medium leading-9",

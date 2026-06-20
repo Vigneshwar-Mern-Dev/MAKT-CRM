@@ -85,8 +85,8 @@ export default async function UserCallCenterOverviewPage() {
         <Link className="rounded-lg border border-white/10 bg-white/[0.03] px-5 py-4 text-sm font-bold text-white transition hover:bg-white/[0.06]" href="/user/calls/callbacks">
           Review open leads
         </Link>
-        <Link className="rounded-lg border border-white/10 bg-white/[0.03] px-5 py-4 text-sm font-bold text-white transition hover:bg-white/[0.06]" href="/user/leads/follow-ups">
-          Check lead follow-ups
+        <Link className="rounded-lg border border-white/10 bg-white/[0.03] px-5 py-4 text-sm font-bold text-white transition hover:bg-white/[0.06]" href="/user/calls/callbacks">
+          Check call follow-ups
         </Link>
       </section>
 

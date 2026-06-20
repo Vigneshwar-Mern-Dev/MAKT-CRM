@@ -264,7 +264,7 @@ export function UserCallbacksPageClient({
       <section className="rounded-lg border border-white/10 bg-white/[0.03] p-6">
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--user-accent-text)]">Call Center</p>
         <h1 className="mt-3 text-3xl font-black tracking-tight text-white">My open leads</h1>
-        <p className="mt-2 text-sm text-zinc-400">Live assigned calls and missed call sessions that need lead follow-up.</p>
+        <p className="mt-2 text-sm text-zinc-400">Live calls, assigned callbacks, and unassigned missed calls that need lead follow-up.</p>
       </section>
 
       {error ? <div className="rounded-lg border border-rose-300/20 bg-rose-300/10 px-4 py-2 text-xs text-rose-200">{error}</div> : null}
@@ -279,7 +279,7 @@ export function UserCallbacksPageClient({
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Open leads</p>
           <p className="mt-3 text-3xl font-black text-white">{visibleOpenLeads.length}</p>
-          <p className="mt-2 text-xs text-zinc-500">Unassigned leads waiting</p>
+          <p className="mt-2 text-xs text-zinc-500">Assigned or unassigned leads waiting</p>
         </div>
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Unique callers</p>
@@ -291,7 +291,7 @@ export function UserCallbacksPageClient({
       <section className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.03]">
         <div className="border-b border-white/10 px-5 py-4">
           <h2 className="font-bold text-white">Open leads</h2>
-          <p className="mt-1 text-xs text-zinc-500">Unassigned leads are claimed by your account when you save.</p>
+          <p className="mt-1 text-xs text-zinc-500">Unassigned leads are claimed by your account when you save. Assigned callbacks remain visible here.</p>
         </div>
         <div className="overflow-x-auto">
           <div className="min-w-[1080px]">
@@ -318,11 +318,30 @@ export function UserCallbacksPageClient({
                         {missedCall ? <SignalPill tone="rose">Missed</SignalPill> : null}
                         {isNewLead(lead) ? <SignalPill tone="amber">New</SignalPill> : null}
                       </div>
-                      <a className="mt-1 block text-xs font-bold text-[var(--user-accent-text)] hover:underline" href={`tel:${lead.phone}`}>{lead.phone}</a>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <a className="text-xs font-bold text-[var(--user-accent-text)] hover:underline" href={`tel:${lead.phone}`}>{lead.phone}</a>
+                        {actionCall?.companyPhone && (
+                          <span className="inline-flex items-center rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-bold text-zinc-400 border border-zinc-700" title={`Received on ${actionCall.companyPhone.label} (${actionCall.companyPhone.phoneNumber})`}>
+                            via {actionCall.companyPhone.phoneNumber.slice(-4)}
+                          </span>
+                        )}
+                      </div>
                       <p className="mt-1 text-[11px] text-zinc-500">{lead.assignedToId ? "Assigned to you" : "Unassigned"}</p>
                     </div>
                     <div>
-                      <p className="truncate text-zinc-300">{lead.address || "--"}</p>
+                      {lead.address && (lead.address.startsWith("http://") || lead.address.startsWith("https://")) ? (
+                        <a
+                          href={lead.address}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-cyan-400 hover:text-cyan-300 hover:underline font-semibold"
+                          title={lead.address}
+                        >
+                          📍 Open Map
+                        </a>
+                      ) : (
+                        <p className="truncate text-zinc-300" title={lead.address || ""}>{lead.address || "--"}</p>
+                      )}
                       <p className="mt-1 text-xs text-zinc-500">{lead.city || "--"}</p>
                     </div>
                     <div>

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { db } from "@/app/lib/db";
-import { LeadStage, SheetConnectionStatus, TaskStatus } from "@/app/lib/prisma-enums";
+import { CallLeadStatus, TaskStatus, WhatsAppLeadStatus } from "@/app/lib/prisma-enums";
 
 function formatDate(value: Date | null) {
   if (!value) {
@@ -15,49 +15,33 @@ function formatDate(value: Date | null) {
   });
 }
 
-function pct(value: number, total: number) {
-  if (!total) {
-    return "0%";
-  }
-
-  return `${Math.round((value / total) * 100)}%`;
-}
-
 async function getOverviewData() {
   try {
+    const openCallStatuses = [
+      CallLeadStatus.NEW,
+      CallLeadStatus.CONTACTED,
+      CallLeadStatus.FOLLOW_UP,
+      CallLeadStatus.INTERESTED,
+      CallLeadStatus.NO_RESPONSE,
+    ];
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
     const [
       totalUsers,
       adminUsers,
-      standardUsers,
-      websiteLeads,
-      instagramLeads,
-      newWebsiteLeads,
-      newInstagramLeads,
-      websiteFollowUps,
-      instagramFollowUps,
-      websiteConverted,
-      instagramConverted,
-      unassignedWebsiteLeads,
-      unassignedInstagramLeads,
       openTasks,
       overdueTasks,
-      integrations,
-      recentWebsiteLeads,
-      recentInstagramLeads,
+      openCallLeads,
+      unassignedCallLeads,
+      callFollowUps,
+      recentCallLeads,
+      waSentToday,
+      waStatusCounts,
     ] = await Promise.all([
       db.user.count(),
       db.user.count({ where: { role: "ADMIN" } }),
-      db.user.count({ where: { role: "USER" } }),
-      db.websiteLead.count(),
-      db.instagramLead.count(),
-      db.websiteLead.count({ where: { stage: LeadStage.NEW } }),
-      db.instagramLead.count({ where: { stage: LeadStage.NEW } }),
-      db.websiteLead.count({ where: { stage: LeadStage.FOLLOW_UP } }),
-      db.instagramLead.count({ where: { stage: LeadStage.FOLLOW_UP } }),
-      db.websiteLead.count({ where: { stage: LeadStage.CONVERTED } }),
-      db.instagramLead.count({ where: { stage: LeadStage.CONVERTED } }),
-      db.websiteLead.count({ where: { assignedToId: null } }),
-      db.instagramLead.count({ where: { assignedToId: null } }),
       db.task.count({
         where: { status: { in: [TaskStatus.PENDING, TaskStatus.IN_PROGRESS] } },
       }),
@@ -67,51 +51,49 @@ async function getOverviewData() {
           status: { notIn: [TaskStatus.COMPLETED, TaskStatus.CANCELLED] },
         },
       }),
-      db.leadIntegration.findMany({
-        orderBy: { source: "asc" },
+      db.callLead.count({ where: { status: { in: openCallStatuses } } }),
+      db.callLead.count({
+        where: { assignedToId: null, status: { in: openCallStatuses } },
+      }),
+      db.callFollowUp.count({ where: { completedAt: null } }),
+      db.callLead.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 6,
         select: {
-          source: true,
+          id: true,
+          displayName: true,
+          phone: true,
           status: true,
-          importedCount: true,
-          failedCount: true,
-          lastSyncedAt: true,
+          assignedTo: { select: { username: true } },
+          createdAt: true,
         },
       }),
-      db.websiteLead.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        select: { id: true, name: true, stage: true, createdAt: true, city: true },
-      }),
-      db.instagramLead.findMany({
-        orderBy: { createdAt: "desc" },
-        take: 5,
-        select: { id: true, name: true, stage: true, createdAt: true, city: true },
+      db.whatsAppLead.count({ where: { status: WhatsAppLeadStatus.SENT, lastSentAt: { gte: todayStart } } }),
+      db.whatsAppLead.groupBy({
+        by: ["status"],
+        where: { status: { in: [WhatsAppLeadStatus.QUEUED, WhatsAppLeadStatus.REPLIED] } },
+        _count: { _all: true },
       }),
     ]);
 
-    const recentLeads = [
-      ...recentWebsiteLeads.map((lead) => ({ ...lead, source: "Website" })),
-      ...recentInstagramLeads.map((lead) => ({ ...lead, source: "Instagram" })),
-    ]
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(0, 6);
+    const standardUsers = totalUsers - adminUsers;
+    const waQueued = waStatusCounts.find((c) => c.status === WhatsAppLeadStatus.QUEUED)?._count._all ?? 0;
+    const waReplied = waStatusCounts.find((c) => c.status === WhatsAppLeadStatus.REPLIED)?._count._all ?? 0;
 
     return {
       data: {
         totalUsers,
         adminUsers,
         standardUsers,
-        websiteLeads,
-        instagramLeads,
-        totalLeads: websiteLeads + instagramLeads,
-        newLeads: newWebsiteLeads + newInstagramLeads,
-        followUps: websiteFollowUps + instagramFollowUps,
-        convertedLeads: websiteConverted + instagramConverted,
-        unassignedLeads: unassignedWebsiteLeads + unassignedInstagramLeads,
         openTasks,
         overdueTasks,
-        integrations,
-        recentLeads,
+        openCallLeads,
+        unassignedCallLeads,
+        callFollowUps,
+        recentCallLeads,
+        waQueued,
+        waSentToday,
+        waReplied,
       },
       error: null,
     };
@@ -121,17 +103,15 @@ async function getOverviewData() {
         totalUsers: 0,
         adminUsers: 0,
         standardUsers: 0,
-        websiteLeads: 0,
-        instagramLeads: 0,
-        totalLeads: 0,
-        newLeads: 0,
-        followUps: 0,
-        convertedLeads: 0,
-        unassignedLeads: 0,
         openTasks: 0,
         overdueTasks: 0,
-        integrations: [],
-        recentLeads: [],
+        openCallLeads: 0,
+        unassignedCallLeads: 0,
+        callFollowUps: 0,
+        recentCallLeads: [],
+        waQueued: 0,
+        waSentToday: 0,
+        waReplied: 0,
       },
       error: "Database is unreachable. Dashboard numbers are temporarily unavailable.",
     };
@@ -140,184 +120,231 @@ async function getOverviewData() {
 
 export default async function AdminDashboard() {
   const { data, error } = await getOverviewData();
-  const connectedSources = data.integrations.filter(
-    (integration) => integration.status === SheetConnectionStatus.CONNECTED,
-  ).length;
-  const conversionRate = pct(data.convertedLeads, data.totalLeads);
 
   return (
     <div className="space-y-6 pb-8">
-      <section className="flex flex-col justify-between gap-4 rounded-lg border border-white/10 bg-white/[0.03] p-5 md:flex-row md:items-center">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200">
-            Admin overview
-          </p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight text-white md:text-4xl">
-            Dashboard
-          </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
-            Live CRM activity, lead pressure, user access, and task risk in one place.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            className="h-10 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 text-sm font-semibold leading-10 text-cyan-100 transition hover:bg-cyan-300/15"
-            href="/admin/leads/new"
-          >
-            New leads
-          </Link>
-          <Link
-            className="h-10 rounded-lg border border-white/10 px-4 text-sm font-semibold leading-10 text-slate-200 transition hover:bg-white/10"
-            href="/admin/tasks"
-          >
-            Tasks
-          </Link>
+      {/* ── Hero Header ─────────────────────────────────────────────────── */}
+      <section className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-cyan-300/[0.08] via-white/[0.02] to-transparent p-6 md:p-8">
+        <div className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-cyan-400/10 blur-3xl" />
+        <div className="relative flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.28em] text-cyan-300">
+              MAKT CRM — Admin
+            </p>
+            <h1 className="mt-3 text-4xl font-black tracking-tight text-white md:text-5xl">
+              Dashboard
+            </h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">
+              Platform access, task risk, WhatsApp automation, and call center activity in one place.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link className="h-10 rounded-xl border border-cyan-300/30 bg-cyan-300/15 px-4 text-sm font-bold leading-10 text-cyan-100 transition hover:bg-cyan-300/25" href="/admin/calls/leads">
+              📞 Call leads
+            </Link>
+            <Link className="h-10 rounded-xl border border-white/10 px-4 text-sm font-semibold leading-10 text-slate-200 transition hover:bg-white/10" href="/admin/tasks">
+              ✅ Tasks
+            </Link>
+            <Link className="h-10 rounded-xl border border-white/10 px-4 text-sm font-semibold leading-10 text-slate-200 transition hover:bg-white/10" href="/admin/analytics">
+              📊 Analytics
+            </Link>
+            <Link className="h-10 rounded-xl border border-emerald-300/30 bg-emerald-300/15 px-4 text-sm font-bold leading-10 text-emerald-100 transition hover:bg-emerald-300/25" href="/admin/whatsapp">
+              💬 WhatsApp
+            </Link>
+            <Link className="h-10 rounded-xl border border-white/10 px-4 text-sm font-semibold leading-10 text-slate-300 transition hover:bg-white/10" href="/admin/audit">
+              🗒 Audit log
+            </Link>
+          </div>
         </div>
       </section>
 
       {error ? (
-        <div className="rounded-lg border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+        <div className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
           {error}
         </div>
       ) : null}
 
+      {/* ── KPI Cards ───────────────────────────────────────────────────── */}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          ["Total leads", data.totalLeads, "text-cyan-100", "All captured prospects"],
-          ["New leads", data.newLeads, "text-sky-100", "Waiting for first action"],
-          ["Follow-ups", data.followUps, "text-amber-100", "Scheduled callback queue"],
-          ["Open tasks", data.openTasks, "text-rose-100", `${data.overdueTasks} overdue`],
-        ].map(([label, value, tone, detail]) => (
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5" key={label}>
-            <p className="text-sm text-slate-400">{label}</p>
-            <p className={`mt-3 text-4xl font-bold ${tone}`}>{value}</p>
-            <p className="mt-2 text-xs text-slate-500">{detail}</p>
+        {([
+          { 
+            label: "Open call leads", 
+            value: data.openCallLeads, 
+            detail: "Needs operator action", 
+            icon: "📞", 
+            accent: "from-cyan-400/[0.05]", 
+            border: "border-cyan-500/10", 
+            tone: "text-cyan-300", 
+            hoverStyle: "hover:border-cyan-400/50 hover:shadow-[0_0_30px_rgba(34,211,238,0.15)] group-hover:bg-cyan-400/20" 
+          },
+          { 
+            label: "Unassigned", 
+            value: data.unassignedCallLeads, 
+            detail: "No owner assigned", 
+            icon: "⚠️", 
+            accent: "from-sky-400/[0.05]", 
+            border: "border-sky-500/10", 
+            tone: "text-sky-300", 
+            hoverStyle: "hover:border-sky-400/50 hover:shadow-[0_0_30px_rgba(56,189,248,0.15)] group-hover:bg-sky-400/20" 
+          },
+          { 
+            label: "Follow-ups", 
+            value: data.callFollowUps, 
+            detail: "Open callback work", 
+            icon: "🔔", 
+            accent: "from-amber-400/[0.05]", 
+            border: "border-amber-500/10", 
+            tone: "text-amber-300", 
+            hoverStyle: "hover:border-amber-400/50 hover:shadow-[0_0_30px_rgba(251,191,36,0.15)] group-hover:bg-amber-400/20" 
+          },
+          { 
+            label: "Open tasks", 
+            value: data.openTasks, 
+            detail: `${data.overdueTasks} overdue`, 
+            icon: "📋", 
+            accent: "from-rose-400/[0.05]", 
+            border: "border-rose-500/10", 
+            tone: "text-rose-300", 
+            hoverStyle: "hover:border-rose-400/50 hover:shadow-[0_0_30px_rgba(251,113,133,0.15)] group-hover:bg-rose-400/20" 
+          },
+        ] as const).map(({ label, value, detail, icon, accent, border, tone, hoverStyle }) => (
+          <div 
+            key={label} 
+            className={`group relative overflow-hidden rounded-2xl border ${border} bg-gradient-to-br ${accent} to-transparent p-6 backdrop-blur-md transition-all duration-300 hover:scale-[1.02] hover:-translate-y-0.5 ${hoverStyle}`}
+          >
+            {/* Ambient background light flare */}
+            <div className="pointer-events-none absolute -left-12 -top-12 h-24 w-24 rounded-full bg-white/[0.02] blur-xl transition-all duration-500 group-hover:scale-150" />
+            
+            <div className="relative flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-slate-400">{label}</p>
+                <p className={`mt-3 text-5xl font-black tracking-tight ${tone}`}>{value}</p>
+                <p className="mt-2 text-xs text-slate-500">{detail}</p>
+              </div>
+              <span className="text-2xl opacity-60 transition-transform duration-300 group-hover:scale-110">{icon}</span>
+            </div>
           </div>
         ))}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Pipeline health</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Actual lead distribution by source and current operating risk.
-              </p>
-            </div>
-            <span className="rounded-lg bg-cyan-300 px-3 py-1 text-xs font-bold text-slate-950">
-              {conversionRate}
-            </span>
+      {/* ── WhatsApp Panel ──────────────────────────────────────────────── */}
+      <section className="group relative overflow-hidden rounded-2xl border border-emerald-500/15 bg-gradient-to-br from-emerald-500/[0.03] via-white/[0.01] to-transparent p-6 backdrop-blur-md transition-all duration-300 hover:border-emerald-400/40 hover:shadow-[0_0_35px_rgba(16,185,129,0.08)]">
+        <div className="pointer-events-none absolute -bottom-12 -right-12 h-40 w-40 rounded-full bg-emerald-400/5 blur-3xl transition-all duration-500 group-hover:scale-110" />
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2">
+              <span className="animate-pulse h-2 w-2 rounded-full bg-emerald-400 inline-block" />
+              💬 WhatsApp automation
+            </h2>
+            <p className="mt-1 text-sm text-slate-400">Today&apos;s outbound messaging snapshot</p>
           </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {[
-              ["Website leads", data.websiteLeads],
-              ["Instagram leads", data.instagramLeads],
-              ["Unassigned", data.unassignedLeads],
-              ["Converted", data.convertedLeads],
-            ].map(([label, value]) => (
-              <div className="rounded-lg border border-white/5 bg-black/30 p-4" key={label}>
-                <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                  {label}
-                </p>
-                <p className="mt-3 text-2xl font-bold text-white">{value}</p>
-              </div>
-            ))}
+          <div className="flex gap-2">
+            <Link className="h-9 rounded-xl border border-white/10 px-4 text-xs font-semibold leading-9 text-slate-200 transition-all duration-200 hover:bg-white/10 hover:border-white/25" href="/admin/whatsapp">
+              View panel →
+            </Link>
           </div>
         </div>
-
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Sync status</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Google Sheet source health and latest import counters.
-              </p>
+        <div className="relative mt-5 grid gap-3 sm:grid-cols-3">
+          {([
+            { label: "Queued", value: data.waQueued, tone: "text-cyan-300", bg: "bg-cyan-500/[0.02] border-cyan-500/10 hover:border-cyan-400/30 hover:shadow-[0_0_20px_rgba(34,211,238,0.06)]" },
+            { label: "Sent today", value: data.waSentToday, tone: "text-emerald-300", bg: "bg-emerald-500/[0.02] border-emerald-500/10 hover:border-emerald-400/30 hover:shadow-[0_0_20px_rgba(16,185,129,0.06)]" },
+            { label: "Replied", value: data.waReplied, tone: "text-violet-300", bg: "bg-violet-500/[0.02] border-violet-500/10 hover:border-violet-400/30 hover:shadow-[0_0_20px_rgba(139,92,246,0.06)]" },
+          ] as const).map(({ label, value, tone, bg }) => (
+            <div key={label} className={`rounded-xl border ${bg} p-5 transition-all duration-300 hover:scale-[1.01]`}>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+              <p className={`mt-3 text-4xl font-black ${tone}`}>{value}</p>
             </div>
-            <span className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-semibold text-emerald-100">
-              {connectedSources}/{data.integrations.length || 2} connected
-            </span>
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            {data.integrations.map((integration) => (
-              <div className="rounded-lg border border-white/5 bg-black/30 p-4" key={integration.source}>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-white">{integration.source}</p>
-                  <span className="rounded border border-white/10 px-2 py-0.5 text-[11px] font-bold text-slate-300">
-                    {integration.status.replace("_", " ")}
-                  </span>
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                  <div>
-                    <p className="text-slate-500">Imported</p>
-                    <p className="mt-1 font-bold text-slate-100">{integration.importedCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500">Failed</p>
-                    <p className="mt-1 font-bold text-slate-100">{integration.failedCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-slate-500">Synced</p>
-                    <p className="mt-1 font-bold text-slate-100">{formatDate(integration.lastSyncedAt)}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-            {!data.integrations.length ? (
-              <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-4 text-sm text-slate-400 md:col-span-2">
-                No sheet integrations configured yet.
-              </div>
-            ) : null}
-          </div>
+          ))}
         </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <h2 className="text-lg font-semibold text-white">Recent leads</h2>
-          <div className="mt-4 divide-y divide-white/10">
-            {data.recentLeads.map((lead) => (
-              <div className="grid gap-3 py-3 text-sm sm:grid-cols-[1fr_auto_auto]" key={`${lead.source}-${lead.id}`}>
-                <div className="min-w-0">
-                  <p className="truncate font-semibold text-white">{lead.name}</p>
-                  <p className="mt-1 text-xs text-slate-500">{lead.city || "No city"} · {lead.source}</p>
+      {/* ── Recent leads + User summary ─────────────────────────────────── */}
+      <section className="grid gap-4 xl:grid-cols-[1.3fr_0.7fr]">
+        {/* Recent call leads */}
+        <div className="group rounded-2xl border border-white/10 bg-white/[0.01] p-6 backdrop-blur-md transition-all duration-300 hover:border-white/15 hover:shadow-[0_0_25px_rgba(255,255,255,0.02)]">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-base font-bold text-white">Recent call leads</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Latest call records from the call center</p>
+            </div>
+            <Link className="h-8 rounded-lg border border-white/10 px-4 text-xs font-bold leading-8 text-slate-200 transition-all duration-200 hover:bg-white/10 hover:border-white/20" href="/admin/calls/leads">
+              View all →
+            </Link>
+          </div>
+
+          <div className="mt-4 divide-y divide-white/[0.06]">
+            {data.recentCallLeads.map((lead) => {
+              const tone =
+                lead.status === "CONVERTED" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-300"
+                : lead.status === "FOLLOW_UP" || lead.status === "INTERESTED" ? "border-amber-500/20 bg-amber-500/10 text-amber-300"
+                : lead.status === "NOT_INTERESTED" ? "border-rose-500/20 bg-rose-500/10 text-rose-300"
+                : "border-cyan-500/20 bg-cyan-500/10 text-cyan-300";
+              return (
+                <div className="flex items-center justify-between gap-3 py-3.5 transition-all duration-200 hover:bg-white/[0.01] px-2 rounded-xl" key={lead.id}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/5 border border-white/10 text-xs font-bold text-slate-300 shadow-inner">
+                      {(lead.displayName || "?").slice(0, 2).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-white">
+                        {lead.displayName || lead.phone || "Unknown caller"}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {lead.assignedTo?.username || "Unassigned"} · {formatDate(lead.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`shrink-0 rounded-lg border px-2.5 py-1 text-xs font-bold ${tone}`}>
+                    {lead.status.replace(/_/g, " ")}
+                  </span>
                 </div>
-                <span className="h-7 w-fit rounded border border-cyan-300/20 bg-cyan-300/10 px-2 text-xs font-bold leading-7 text-cyan-100">
-                  {lead.stage.replace("_", " ")}
-                </span>
-                <p className="text-xs text-slate-500 sm:text-right">{formatDate(lead.createdAt)}</p>
-              </div>
-            ))}
-            {!data.recentLeads.length ? (
-              <p className="py-4 text-sm text-slate-500">No leads imported yet.</p>
+              );
+            })}
+            {!data.recentCallLeads.length ? (
+              <p className="py-6 text-center text-sm text-slate-500">No call leads yet.</p>
             ) : null}
           </div>
         </div>
 
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-5">
-          <h2 className="text-lg font-semibold text-white">Access summary</h2>
-          <div className="mt-4 grid gap-3">
-            {[
-              ["Total users", data.totalUsers],
-              ["Admins", data.adminUsers],
-              ["Agents", data.standardUsers],
-            ].map(([label, value]) => (
-              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-black/30 px-4 py-3" key={label}>
-                <p className="text-sm text-slate-400">{label}</p>
-                <p className="text-xl font-bold text-white">{value}</p>
-              </div>
-            ))}
+        {/* Access summary + quick links */}
+        <div className="space-y-4">
+          <div className="group rounded-2xl border border-white/10 bg-white/[0.01] p-6 backdrop-blur-md transition-all duration-300 hover:border-white/15 hover:shadow-[0_0_25px_rgba(255,255,255,0.02)]">
+            <h2 className="text-base font-bold text-white">Access summary</h2>
+            <div className="mt-4 space-y-2.5">
+              {([
+                ["Total users", data.totalUsers, "text-white border-white/5 bg-white/[0.01]"],
+                ["Admins", data.adminUsers, "text-rose-300 border-rose-500/5 bg-rose-500/[0.01]"],
+                ["Agents", data.standardUsers, "text-cyan-300 border-cyan-500/5 bg-cyan-500/[0.01]"],
+              ] as const).map(([label, value, tone]) => (
+                <div key={label} className={`flex items-center justify-between rounded-xl border px-4 py-3.5 ${tone}`}>
+                  <p className="text-sm text-slate-400">{label}</p>
+                  <p className="text-2xl font-black tracking-tight">{value}</p>
+                </div>
+              ))}
+            </div>
+            <Link className="mt-4 flex h-10 items-center justify-center rounded-xl border border-white/10 text-sm font-semibold text-slate-200 transition-all duration-200 hover:bg-white/10 hover:border-white/20" href="/admin/users">
+              Manage users
+            </Link>
           </div>
-          <Link
-            className="mt-4 block h-10 rounded-lg border border-white/10 text-center text-sm font-semibold leading-10 text-slate-200 transition hover:bg-white/10"
-            href="/admin/users"
-          >
-            Manage users
-          </Link>
+
+          <div className="group rounded-2xl border border-white/10 bg-white/[0.01] p-6 backdrop-blur-md transition-all duration-300 hover:border-white/15 hover:shadow-[0_0_25px_rgba(255,255,255,0.02)]">
+            <h2 className="text-base font-bold text-white">Quick links</h2>
+            <div className="mt-3 space-y-2">
+              {([
+                ["/admin/analytics", "📊 Analytics"],
+                ["/admin/audit", "🗒 Audit log"],
+                ["/admin/calls/missed", "📵 Callbacks"],
+                ["/admin/whatsapp/leads", "📋 WA leads"],
+              ] as const).map(([href, label]) => (
+                <Link key={href} href={href} className="flex h-10 items-center rounded-xl border border-white/5 bg-black/10 px-4 text-sm font-semibold text-slate-300 transition-all duration-200 hover:border-white/10 hover:bg-white/[0.04] hover:text-white">
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
     </div>
   );
 }
+

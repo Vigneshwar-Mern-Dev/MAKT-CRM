@@ -14,7 +14,6 @@ type UserShellProps = {
     email: string;
   };
   workload: {
-    leadFollowups: number;
     callFollowups: number;
     callOpenLeads: number;
     openTasks: number;
@@ -31,20 +30,6 @@ const navItems = [
         <path d="M4 13h7V4H4v9Zm9 7h7V4h-7v16ZM4 20h7v-5H4v5Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="1.8" />
       </svg>
     ),
-  },
-  {
-    href: "/user/leads",
-    label: "Lead Center",
-    icon: (
-      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none">
-        <path d="M4 5h16M4 12h10M4 19h7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-        <path d="m17 14 3 3-3 3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-    children: [
-      { href: "/user/leads", label: "All Leads" },
-      { href: "/user/leads/follow-ups", label: "Follow-ups" },
-    ],
   },
   {
     href: "/user/tasks",
@@ -149,7 +134,6 @@ function getUserAccentTheme(user: UserShellProps["user"]) {
 export function UserShell({ children, user, workload }: UserShellProps) {
   const pathname = usePathname();
   const initials = user.username.slice(0, 2).toUpperCase() || "US";
-  const leadCenter = navItems.find((item) => item.href === "/user/leads");
   const callCenter = navItems.find((item) => item.href === "/user/calls");
   const accentTheme = getUserAccentTheme(user);
   const theme = userThemeBase;
@@ -256,7 +240,6 @@ export function UserShell({ children, user, workload }: UserShellProps) {
             </div>
             <dl className="mt-4 space-y-3">
               {[
-                ["Lead follow-ups", workload.leadFollowups],
                 ["Call follow-ups", workload.callFollowups],
                 ["Call leads", workload.callOpenLeads],
                 ["Open tasks", workload.openTasks],
@@ -332,25 +315,6 @@ export function UserShell({ children, user, workload }: UserShellProps) {
                 );
               })}
             </nav>
-
-            {pathname.startsWith("/user/leads") ? (
-              <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">
-                {leadCenter?.children?.map((child) => (
-                  <Link
-                    className={[
-                      "h-9 shrink-0 rounded-lg px-3 text-sm font-medium leading-9",
-                      pathname === child.href
-                        ? "bg-white/10 text-white"
-                        : "border border-white/10 text-zinc-400",
-                    ].join(" ")}
-                    href={child.href}
-                    key={child.href}
-                  >
-                    {child.label}
-                  </Link>
-                ))}
-              </nav>
-            ) : null}
 
             {pathname.startsWith("/user/calls") ? (
               <nav className="mt-3 flex gap-2 overflow-x-auto lg:hidden">

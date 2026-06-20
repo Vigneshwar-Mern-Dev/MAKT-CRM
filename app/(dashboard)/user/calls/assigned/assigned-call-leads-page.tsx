@@ -204,10 +204,29 @@ export function AssignedCallLeadsPage({
                 <div className="grid grid-cols-[1.1fr_1fr_1fr_0.75fr_0.9fr_0.85fr_auto] items-center gap-3 px-4 py-4 text-sm" key={lead.id}>
                   <div>
                     <p className="font-bold text-white">{empty(lead.displayName)}</p>
-                    <a className="mt-1 block text-xs font-bold text-[var(--user-accent-text)] hover:underline" href={`tel:${lead.phone}`}>{lead.phone}</a>
+                    <div className="mt-1 flex items-center gap-2">
+                      <a className="text-xs font-bold text-[var(--user-accent-text)] hover:underline" href={`tel:${lead.phone}`}>{lead.phone}</a>
+                      {lead.sessions[0]?.companyPhone && (
+                        <span className="inline-flex items-center rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-bold text-zinc-400 border border-zinc-700" title={`Received on ${lead.sessions[0].companyPhone.label} (${lead.sessions[0].companyPhone.phoneNumber})`}>
+                          via {lead.sessions[0].companyPhone.phoneNumber.slice(-4)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div>
-                    <p className="truncate text-zinc-300">{empty(lead.address)}</p>
+                    {lead.address && (lead.address.startsWith("http://") || lead.address.startsWith("https://")) ? (
+                      <a
+                        href={lead.address}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-400 hover:text-cyan-300 hover:underline font-semibold"
+                        title={lead.address}
+                      >
+                        📍 Open Map
+                      </a>
+                    ) : (
+                      <p className="truncate text-zinc-300" title={lead.address || ""}>{empty(lead.address)}</p>
+                    )}
                     <p className="mt-1 text-xs text-zinc-500">{empty(lead.city)}</p>
                   </div>
                   <div>

@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import type { CallDirection, CallEventType, Prisma } from "@prisma/client";
 import { db } from "./db";
+import { autoQueueWhatsAppForCaller } from "./whatsapp-auto-queue";
 
 const openSessionStatuses = ["RINGING", "ANSWERED"] as const;
 
@@ -344,7 +345,7 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
     };
   }
 
-  return db.$transaction(async (tx) => {
+  const txResult = await db.$transaction(async (tx) => {
     const latestOpenSession = await tx.callSession.findFirst(
       findOpenSessionArgs({
         companyPhoneId: companyPhone.id,
@@ -378,7 +379,7 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
 
       return {
         duplicate: false,
-        ignored: true,
+        ignored: true as const,
         reason: "caller_missing_without_open_session",
       };
     }
@@ -543,11 +544,35 @@ export async function ingestCallEvent(input: CallTrackerEventInput) {
     });
 
     return {
-      duplicate: false,
+      duplicate: false as const,
+      ignored: false as const,
       eventId: event.id,
       sessionId: session.id,
       leadId: lead.id,
+      callerPhone: effectiveCallerNumber,
+      callerDisplayName:
+        cleanText(input.localContactName) || `Caller ${effectiveCallerNumber.slice(-4)}`,
       status: session.status,
     };
   });
+
+  // Auto-queue a WhatsApp reply when the incoming call finishes (either ENDED or MISSED).
+  // Runs AFTER the transaction so a WhatsApp failure never rolls back call data.
+  // autoQueueWhatsAppForCaller contains safety checks to prevent duplicate queueing/spamming.
+  if (
+    !txResult.duplicate &&
+    !txResult.ignored &&
+    input.callDirection === "INCOMING" &&
+    txResult.callerPhone &&
+    (input.eventType === "ENDED" || input.eventType === "MISSED")
+  ) {
+    try {
+      const callState = txResult.status === "COMPLETED" ? "ANSWERED" : "MISSED";
+      await autoQueueWhatsAppForCaller(txResult.callerPhone, txResult.callerDisplayName, callState);
+    } catch (err) {
+      console.error("[call-tracker] WhatsApp auto-queue error:", err);
+    }
+  }
+
+  return txResult;
 }

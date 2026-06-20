@@ -5,7 +5,7 @@ import {
   ingestCallEvent,
 } from "@/app/lib/call-tracker";
 
-const callEventTypes = new Set(["RINGING", "ANSWERED", "ENDED", "MISSED"]);
+const callEventTypes = new Set(["RINGING", "ANSWERED", "ENDED", "MISSED", "OUTGOING"]);
 const callDirections = new Set(["INCOMING", "OUTGOING", "UNKNOWN"]);
 
 function getBearerToken(request: NextRequest) {
@@ -98,10 +98,13 @@ export async function POST(request: NextRequest) {
     const companyPhone = typeof body.companyPhone === "string" ? body.companyPhone.trim() : "";
     const caller = typeof body.caller === "string" ? body.caller.trim() : "";
     const eventType = typeof body.eventType === "string" ? body.eventType.trim() : "";
+    const normalizedEventType = eventType === "OUTGOING" ? "ANSWERED" : eventType;
     const callDirection =
-      typeof body.callDirection === "string" && callDirections.has(body.callDirection.trim())
-        ? body.callDirection.trim()
-        : "INCOMING";
+      eventType === "OUTGOING"
+        ? "OUTGOING"
+        : typeof body.callDirection === "string" && callDirections.has(body.callDirection.trim())
+          ? body.callDirection.trim()
+          : "INCOMING";
     const occurredAt = parseOccurredAt(body.occurredAt);
     const callSessionLocalId =
       typeof body.callSessionLocalId === "string" ? body.callSessionLocalId.trim() : "";
@@ -143,7 +146,7 @@ export async function POST(request: NextRequest) {
       deviceId,
       companyPhone,
       caller: caller || undefined,
-      eventType: eventType as CallEventType,
+      eventType: normalizedEventType as CallEventType,
       callDirection: callDirection as CallDirection,
       occurredAt,
       durationSeconds: parseOptionalNumber(body.durationSeconds),

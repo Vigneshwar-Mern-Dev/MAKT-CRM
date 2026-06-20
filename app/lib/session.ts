@@ -70,7 +70,7 @@ export async function createSession(user: { id: string; role: Role }) {
   (await cookies()).set(sessionCookieName, `${encodedPayload}.${signature}`, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_CRM_URL?.startsWith("https"),
     path: "/",
     expires: new Date(expiresAt),
   });

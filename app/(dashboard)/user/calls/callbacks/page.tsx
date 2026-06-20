@@ -36,6 +36,7 @@ export default async function UserCallbacksPage() {
         OR: [
           { assignedToId: user.id },
           { lead: { assignedToId: user.id } },
+          { lead: { assignedToId: null } },
         ],
       },
       include: {
@@ -47,7 +48,7 @@ export default async function UserCallbacksPage() {
     }),
     db.callLead.findMany({
       where: {
-        assignedToId: null,
+        OR: [{ assignedToId: null }, { assignedToId: user.id }],
         phone: { not: { startsWith: "UNKNOWN-" } },
         status: { in: [...actionableStatuses] },
       },
@@ -58,7 +59,10 @@ export default async function UserCallbacksPage() {
     db.callSession.findMany({
       where: {
         status: "MISSED",
-        lead: { assignedToId: null, status: { notIn: ["CONVERTED", "CLOSED", "NOT_INTERESTED"] } },
+        lead: {
+          OR: [{ assignedToId: null }, { assignedToId: user.id }],
+          status: { notIn: ["CONVERTED", "CLOSED", "NOT_INTERESTED"] },
+        },
       },
       orderBy: { firstRingAt: "asc" },
       take: 100,

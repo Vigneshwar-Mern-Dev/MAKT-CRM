@@ -13,8 +13,8 @@ export default async function UserDashboard() {
     ["Overdue", data.overdueTasks, "Needs attention"],
   ] as const;
   const focusItems = [
-    ["All follow-ups", String(data.totalFollowups), "Website and call lead touches"],
-    ["Campaign replies", "0", "New responses"],
+    ["Call follow-ups", String(data.callFollowups), "Open callback work"],
+    ["Open call leads", String(data.callOpenLeads), "Assigned call queue"],
     ["Customer tasks", String(data.totalTasks), "Assigned task load"],
   ] as const;
 
@@ -111,16 +111,16 @@ export default async function UserDashboard() {
             </Link>
             <Link
               className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-zinc-200 transition hover:border-[color:var(--user-accent-border)] hover:bg-white/[0.06]"
-              href="/user/leads"
+              href="/user/calls/assigned"
             >
-              <span>Review lead queue</span>
+              <span>Assigned call leads</span>
               <span aria-hidden="true" className="text-[var(--user-accent-text)]">-&gt;</span>
             </Link>
             <Link
               className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-zinc-200 transition hover:border-[color:var(--user-accent-border)] hover:bg-white/[0.06]"
-              href="/user/leads/follow-ups"
+              href="/user/calls/assigned"
             >
-              <span>Check follow-ups</span>
+              <span>Check assigned calls</span>
               <span aria-hidden="true" className="text-[var(--user-accent-text)]">-&gt;</span>
             </Link>
           </div>
